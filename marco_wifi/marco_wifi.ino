@@ -620,14 +620,19 @@ bool tgLlamar(const String &metodo, const String &params, JsonDocument &doc, Jso
   tgCliente.setInsecure();   // sin validar certificado (ver README)
   String url = "https://api.telegram.org/bot" + token + "/" + metodo;
   if (params.length()) url += "?" + params;
-  if (!http.begin(tgCliente, url)) return false;
+  if (!http.begin(tgCliente, url)) { Serial.println("[telegram] " + metodo + ": no pude iniciar la conexion"); return false; }
   http.setTimeout(10000);
   int codigo = http.GET();
-  if (codigo != 200) { http.end(); return false; }
+  if (codigo != 200) {
+    Serial.printf("[telegram] %s: HTTP %d (%s) heap libre %u\n", metodo.c_str(), codigo,
+                  codigo < 0 ? http.errorToString(codigo).c_str() : http.getString().substring(0, 120).c_str(), ESP.getFreeHeap());
+    http.end(); return false;
+  }
   String cuerpo = http.getString();
   http.end();
   DeserializationError e = filtro ? deserializeJson(doc, cuerpo, DeserializationOption::Filter(*filtro))
                                   : deserializeJson(doc, cuerpo);
+  if (e) Serial.printf("[telegram] %s: JSON invalido (%s), %u bytes\n", metodo.c_str(), e.c_str(), cuerpo.length());
   return !e && doc["ok"].as<bool>();
 }
 
@@ -662,6 +667,20 @@ int tgGuardarBloque(JPEGDRAW *p) {
 }
 
 // Descarga la foto de Telegram, la recorta al centro y la agrega al marco
+// Lectura del JPG desde LittleFS (asi no hace falta tenerlo entero en RAM)
+File tgJpg;
+void *tgJpgAbrir(const char *nombre, int32_t *largo) {
+  tgJpg = LittleFS.open(nombre, "r");
+  if (!tgJpg) return nullptr;
+  *largo = tgJpg.size();
+  return &tgJpg;
+}
+void tgJpgCerrar(void *h) { if (h) ((File *)h)->close(); }
+int32_t tgJpgLeer(JPEGFILE *f, uint8_t *buf, int32_t n) { return ((File *)f->fHandle)->read(buf, n); }
+int32_t tgJpgMover(JPEGFILE *f, int32_t pos) { return ((File *)f->fHandle)->seek(pos) ? pos : -1; }
+
+const char *TG_TEMPORAL = "/tg.jpg";
+
 String tgAgregarFoto(const String &fileId, int escala) {
   size_t libre = LittleFS.totalBytes() - LittleFS.usedBytes();
   if (libre < BYTES_FOTO + 16384) return "La memoria del marco esta llena. Borra algunas fotos desde la pagina del marco.";
@@ -678,20 +697,28 @@ String tgAgregarFoto(const String &fileId, int escala) {
   http.setTimeout(15000);
   if (http.GET() != 200) { http.end(); return "No pude descargar la foto."; }
   int largo = http.getSize();
-  if (largo <= 0 || largo > 220000) { http.end(); return "La foto es demasiado grande."; }
-  uint8_t *jpg = (uint8_t *)malloc(largo);
-  if (!jpg) { http.end(); return "Sin memoria para la foto."; }
+  if (largo > 400000) { http.end(); return "La foto es demasiado grande."; }
+  if (largo > 0 && libre < BYTES_FOTO + (size_t)largo + 16384) { http.end(); return "La memoria del marco esta llena. Borra algunas fotos desde la pagina del marco."; }
+  // Se guarda primero en un archivo temporal: mientras la conexion segura esta abierta queda poca RAM
+  File tmp = LittleFS.open(TG_TEMPORAL, "w");
+  if (!tmp) { http.end(); return "No pude guardar la foto."; }
   WiFiClient *flujo = http.getStreamPtr();
+  uint8_t trozo[1024];
   int leidos = 0;
-  unsigned long limite = millis() + 15000;
-  while (leidos < largo && millis() < limite) {
-    int n = flujo->read(jpg + leidos, largo - leidos);
-    if (n > 0) leidos += n; else delay(5);
+  unsigned long limite = millis() + 20000;
+  while ((largo < 0 || leidos < largo) && millis() < limite && (http.connected() || flujo->available())) {
+    int n = flujo->read(trozo, sizeof(trozo));
+    if (n > 0) { tmp.write(trozo, n); leidos += n; limite = millis() + 20000; }
+    else delay(5);
   }
+  tmp.close();
   http.end();
-  if (leidos != largo) { free(jpg); return "La descarga se corto."; }
+  Serial.printf("[telegram] foto descargada: %d bytes\n", leidos);
+  if (leidos <= 0 || (largo > 0 && leidos != largo)) { LittleFS.remove(TG_TEMPORAL); return "La descarga se corto."; }
 
-  if (!jpeg.openRAM(jpg, largo, tgGuardarBloque)) { free(jpg); return "No pude leer la foto (formato JPG)."; }
+  if (!jpeg.open(TG_TEMPORAL, tgJpgAbrir, tgJpgCerrar, tgJpgLeer, tgJpgMover, tgGuardarBloque)) {
+    LittleFS.remove(TG_TEMPORAL); return "No pude leer la foto (formato JPG).";
+  }
   int w = jpeg.getWidth() / escala, h = jpeg.getHeight() / escala;
   tgRecorteX = (w - 240) / 2;
   tgRecorteY = (h - 240) / 2;
@@ -710,7 +737,7 @@ String tgAgregarFoto(const String &fileId, int escala) {
   int ok = jpeg.decode(0, 0, opciones);
   jpeg.close();
   tgArchivo.close();
-  free(jpg);
+  LittleFS.remove(TG_TEMPORAL);
   if (!ok) { LittleFS.remove(rutaDe(id)); return "No pude decodificar la foto."; }
 
   orden.push_back(id);
@@ -745,6 +772,7 @@ void revisarTelegram() {
   JsonDocument doc;
   if (!tgLlamar("getUpdates", "offset=" + String(tgOffset) + "&limit=3&timeout=0&allowed_updates=%5B%22message%22%5D", doc, &filtro, tgToken)) return;
 
+  if (doc["result"].size()) Serial.printf("[telegram] %u mensaje(s) nuevo(s)\n", (unsigned)doc["result"].size());
   for (JsonObject u : doc["result"].as<JsonArray>()) {
     tgOffset = u["update_id"].as<long>() + 1;
     JsonObject msg = u["message"];
