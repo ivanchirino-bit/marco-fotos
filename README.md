@@ -10,6 +10,7 @@ Muestra fotos, **stickers animados de WhatsApp**, **videos cortos** y la **hora*
 - **Reloj:** al terminar cada vuelta muestra la hora y la fecha (horario de Chile, por internet) durante 20 segundos (configurable).
 - **Página web** para agregar, encuadrar, ordenar y borrar fotos desde el celular o el computador.
 - **Telegram:** envía una foto a tu bot desde cualquier lugar y aparece en el marco en segundos.
+- **Clima:** pantalla con el clima de tu ciudad (temperatura, mínima/máxima y un dibujo del tiempo) después de la hora.
 - **Brillo** ajustable (pantalla cuadrada).
 - Las fotos quedan guardadas en el marco: **funciona sin WiFi** una vez cargadas.
 
@@ -99,6 +100,18 @@ El marco consulta tu bot cada 15 segundos, así que funciona desde cualquier par
 - Quien no esté autorizado solo recibe su ID como respuesta; sus fotos se ignoran.
 - La conexión con Telegram usa HTTPS sin validar el certificado del servidor (simplificación habitual en ESP32); en una red de confianza no es un problema.
 
+## Clima de tu ciudad
+
+Al terminar cada vuelta de fotos, después de la hora, el marco muestra una pantalla con el clima:
+ciudad, dibujo del tiempo (sol, luna, nubes, lluvia, nieve, tormenta o neblina), temperatura actual,
+descripción y mínima/máxima del día.
+
+1. En la página del marco, pestaña **WiFi**, abre **Clima de tu ciudad**.
+2. Escribe la ciudad y presiona **Guardar**. Si escribes solo la ciudad se busca en Chile; para otro país agrega una coma: `Lima, Peru`.
+3. En los ajustes, **Clima después de la hora** define cuántos segundos se muestra (o "No mostrar").
+
+Los datos vienen de [Open-Meteo](https://open-meteo.com) (gratis, sin registro ni clave) y se actualizan cada 30 minutos.
+
 ## Otras formas de cargar fotos
 
 ### Por cable (sin WiFi)
@@ -120,13 +133,14 @@ Traen 2 imágenes de ejemplo en `ejemplos.h`. Para usar tus fotos, genera los ar
 - **Stickers WebP:** la página los separa en cuadros con su propio lector, porque `ImageDecoder` del navegador no está disponible en páginas http (como la del marco).
 - **Hora:** NTP (`pool.ntp.org`) con zona horaria de Chile continental, incluido el horario de verano.
 - **Telegram:** `getUpdates` cada 15 s; la foto se descarga en el tamaño más cercano a 240 px, se decodifica con JPEGDEC (con escala 1/2, 1/4 o 1/8 si hace falta) y se recorta al centro.
-- **API del marco:** `GET /api/info`, `GET /api/foto?id=`, `POST /api/fotos` (multipart), `POST /api/borrar?id=`, `POST /api/orden`, `POST /api/config`, `POST /api/wifi`, `POST /api/telegram`.
+- **API del marco:** `GET /api/info`, `GET /api/foto?id=`, `POST /api/fotos` (multipart), `POST /api/borrar?id=`, `POST /api/orden`, `POST /api/config`, `POST /api/wifi`, `POST /api/telegram`, `POST /api/clima` (`ciudad=` o `quitar=1`).
 
 ## Créditos
 
 - Pantalla: [GFX Library for Arduino](https://github.com/moononournation/Arduino_GFX).
 - JPG: [JPEGDEC](https://github.com/bitbank2/JPEGDEC).
 - JSON: [ArduinoJson](https://github.com/bblanchon/ArduinoJson).
+- Clima y búsqueda de ciudades: [Open-Meteo](https://open-meteo.com).
 - Fuentes FreeSansBold de [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library) (licencia BSD).
 - Conversión de fotos HEIC en el navegador: [heic2any](https://github.com/alexcorvi/heic2any).
 
