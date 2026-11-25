@@ -1,7 +1,7 @@
 # 🖼️ Marco de fotos ESP32
 
 Marco de fotos digital con un **ESP32** y una pantalla de **240×240** (cuadrada ST7789 de 1.54" o redonda GC9A01 de 1.28").
-Muestra fotos, **stickers animados de WhatsApp**, **videos cortos** y la **hora**, y se administra **por WiFi desde el celular**, sin cables ni Arduino IDE.
+Muestra fotos, **stickers animados de WhatsApp**, **videos cortos** y la **hora**. Se administra **por WiFi desde el celular** y recibe fotos **por Telegram desde cualquier lugar**, sin cables ni Arduino IDE.
 
 ## Qué hace
 
@@ -9,6 +9,7 @@ Muestra fotos, **stickers animados de WhatsApp**, **videos cortos** y la **hora*
 - **Animaciones:** stickers WebP de WhatsApp, GIF y videos (los primeros 6 segundos), a unos 15 cuadros por segundo.
 - **Reloj:** al terminar cada vuelta muestra la hora y la fecha (horario de Chile, por internet) durante 20 segundos (configurable).
 - **Página web** para agregar, encuadrar, ordenar y borrar fotos desde el celular o el computador.
+- **Telegram:** envía una foto a tu bot desde cualquier lugar y aparece en el marco en segundos.
 - **Brillo** ajustable (pantalla cuadrada).
 - Las fotos quedan guardadas en el marco: **funciona sin WiFi** una vez cargadas.
 
@@ -52,6 +53,7 @@ Las dos pantallas usan los mismos pines; la cuadrada tiene además **BLK** (luz 
 2. Instala las librerías (Library Manager):
    - **GFX Library for Arduino** (moononournation)
    - **JPEGDEC** (Larry Bank)
+   - **ArduinoJson** (Benoit Blanchon)
 3. Abre `marco_wifi/marco_wifi.ino` y elige en **Tools**:
    - Board: **ESP32 Dev Module**
    - Partition Scheme: **No OTA (2MB APP/2MB SPIFFS)**
@@ -82,6 +84,21 @@ Caben unas **16 fotos** (cada una ocupa ~115 KB; un sticker animado ocupa más o
 
 **Fuera de casa:** el marco sigue mostrando sus fotos sin WiFi. Para cambiarlas, conecta el celular a **MarcoFotos** y abre **http://192.168.4.1/editor**.
 
+## Fotos por Telegram (desde cualquier lugar)
+
+El marco consulta tu bot cada 15 segundos, así que funciona desde cualquier parte sin abrir puertos en el router.
+
+1. En Telegram, abre **@BotFather**, envía `/newbot`, elige un nombre y un usuario terminado en `bot`. Te entrega un **token**.
+2. En la página del marco, abre **Recibir fotos por Telegram**, pega el token y presiona **Guardar** (debe decir "conectado a @tubot").
+3. Envíale una foto al bot: te responde con tu **ID**. Agrégalo en **IDs autorizados** y guarda.
+4. Desde ahora, cada foto que le envíes aparece en el marco. Puedes autorizar a varias personas (IDs separados por coma).
+
+- Envía las imágenes **como foto**, no como archivo.
+- Comando `/estado`: cuántas fotos tiene el marco y cuánto espacio queda.
+- El token y los IDs se guardan **solo en el marco**, nunca en el código ni en este repositorio.
+- Quien no esté autorizado solo recibe su ID como respuesta; sus fotos se ignoran.
+- La conexión con Telegram usa HTTPS sin validar el certificado del servidor (simplificación habitual en ESP32); en una red de confianza no es un problema.
+
 ## Otras formas de cargar fotos
 
 ### Por cable (sin WiFi)
@@ -102,12 +119,14 @@ Traen 2 imágenes de ejemplo en `ejemplos.h`. Para usar tus fotos, genera los ar
 - **Formato de animación (`.anm`):** `"ANM1"` + cantidad de cuadros (uint16) + ms por cuadro (uint16) + posiciones (uint32 × cuadros+1) + cada cuadro como JPG 240×240. El ESP32 los decodifica con JPEGDEC.
 - **Stickers WebP:** la página los separa en cuadros con su propio lector, porque `ImageDecoder` del navegador no está disponible en páginas http (como la del marco).
 - **Hora:** NTP (`pool.ntp.org`) con zona horaria de Chile continental, incluido el horario de verano.
-- **API del marco:** `GET /api/info`, `GET /api/foto?id=`, `POST /api/fotos` (multipart), `POST /api/borrar?id=`, `POST /api/orden`, `POST /api/config`, `POST /api/wifi`.
+- **Telegram:** `getUpdates` cada 15 s; la foto se descarga en el tamaño más cercano a 240 px, se decodifica con JPEGDEC (con escala 1/2, 1/4 o 1/8 si hace falta) y se recorta al centro.
+- **API del marco:** `GET /api/info`, `GET /api/foto?id=`, `POST /api/fotos` (multipart), `POST /api/borrar?id=`, `POST /api/orden`, `POST /api/config`, `POST /api/wifi`, `POST /api/telegram`.
 
 ## Créditos
 
 - Pantalla: [GFX Library for Arduino](https://github.com/moononournation/Arduino_GFX).
 - JPG: [JPEGDEC](https://github.com/bitbank2/JPEGDEC).
+- JSON: [ArduinoJson](https://github.com/bblanchon/ArduinoJson).
 - Fuentes FreeSansBold de [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library) (licencia BSD).
 - Conversión de fotos HEIC en el navegador: [heic2any](https://github.com/alexcorvi/heic2any).
 
