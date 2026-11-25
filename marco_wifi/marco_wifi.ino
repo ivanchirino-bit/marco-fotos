@@ -652,20 +652,43 @@ bool tgAutorizado(const String &chat) {
 File tgArchivo;
 int tgRecorteX = 0, tgRecorteY = 0;
 
-int tgGuardarBloque(JPEGDRAW *p) {
-  for (int fila = 0; fila < p->iHeight; fila++) {
-    int dy = p->y + fila - tgRecorteY;
+// La foto se escribe en orden, fila por fila (sin saltar dentro del archivo:
+// en LittleFS eso duplica bloques y puede llenar la memoria).
+// "bloque" guarda la franja de filas que JPEGDEC esta entregando.
+int tgFranjaY = -1, tgFranjaAlto = 0, tgFilasEscritas = 0;
+bool tgErrorEscritura = false;
+void tgEscribirFila(const uint8_t *datos) {
+  if (tgErrorEscritura) return;
+  if (tgArchivo.write(datos, 480) != 480) tgErrorEscritura = true;
+  tgFilasEscritas++;
+}
+void tgVaciarFranja() {
+  static const uint8_t negro[480] = {0};
+  for (int r = 0; r < tgFranjaAlto; r++) {
+    int dy = tgFranjaY + r - tgRecorteY;
     if (dy < 0 || dy >= 240) continue;
+    while (tgFilasEscritas < dy) tgEscribirFila(negro);
+    if (tgFilasEscritas == dy) tgEscribirFila((uint8_t *)(bloque + r * 240));
+  }
+  tgFranjaY = -1;
+  tgFranjaAlto = 0;
+}
+int tgGuardarBloque(JPEGDRAW *p) {
+  if (p->y != tgFranjaY) {
+    if (tgFranjaY >= 0) tgVaciarFranja();
+    tgFranjaY = p->y;
+    memset(bloque, 0, sizeof(bloque));
+  }
+  if (p->iHeight > tgFranjaAlto) tgFranjaAlto = min(p->iHeight, 20);
+  for (int fila = 0; fila < p->iHeight && fila < 20; fila++) {
     int x0 = p->x - tgRecorteX, desde = 0, ancho = p->iWidth;
     if (x0 < 0) { desde = -x0; ancho -= desde; x0 = 0; }
     if (x0 + ancho > 240) ancho = 240 - x0;
     if (ancho <= 0) continue;
-    tgArchivo.seek((dy * 240 + x0) * 2);
-    tgArchivo.write((uint8_t *)(p->pPixels + fila * p->iWidth + desde), ancho * 2);
+    memcpy(bloque + fila * 240 + x0, p->pPixels + fila * p->iWidth + desde, ancho * 2);
   }
-  return 1;
+  return tgErrorEscritura ? 0 : 1;
 }
-
 // Descarga la foto de Telegram, la recorta al centro y la agrega al marco
 // Lectura del JPG desde LittleFS (asi no hace falta tenerlo entero en RAM)
 File tgJpg;
@@ -705,16 +728,25 @@ String tgAgregarFoto(const String &fileId, int escala) {
   WiFiClient *flujo = http.getStreamPtr();
   uint8_t trozo[1024];
   int leidos = 0;
+  bool sinEspacio = false;
   unsigned long limite = millis() + 20000;
   while ((largo < 0 || leidos < largo) && millis() < limite && (http.connected() || flujo->available())) {
     int n = flujo->read(trozo, sizeof(trozo));
-    if (n > 0) { tmp.write(trozo, n); leidos += n; limite = millis() + 20000; }
+    if (n > 0) {
+      if (tmp.write(trozo, n) != (size_t)n) { sinEspacio = true; break; }
+      leidos += n; limite = millis() + 20000;
+    }
     else delay(5);
   }
   tmp.close();
   http.end();
   Serial.printf("[telegram] foto descargada: %d bytes\n", leidos);
+  if (sinEspacio) { LittleFS.remove(TG_TEMPORAL); return "La memoria del marco esta llena. Borra algunas fotos desde la pagina del marco."; }
   if (leidos <= 0 || (largo > 0 && leidos != largo)) { LittleFS.remove(TG_TEMPORAL); return "La descarga se corto."; }
+  if (LittleFS.totalBytes() - LittleFS.usedBytes() < BYTES_FOTO + 16384) {
+    LittleFS.remove(TG_TEMPORAL);
+    return "La memoria del marco esta llena. Borra algunas fotos desde la pagina del marco.";
+  }
 
   if (!jpeg.open(TG_TEMPORAL, tgJpgAbrir, tgJpgCerrar, tgJpgLeer, tgJpgMover, tgGuardarBloque)) {
     LittleFS.remove(TG_TEMPORAL); return "No pude leer la foto (formato JPG).";
@@ -726,18 +758,21 @@ String tgAgregarFoto(const String &fileId, int escala) {
   int sig = prefs.getInt("sig", 1);
   prefs.putInt("sig", sig + 1);
   String id = String(sig);
-  // archivo de 240x240 en negro, que luego se llena con la foto
-  File f = LittleFS.open(rutaDe(id), "w");
-  memset(bloque, 0, sizeof(bloque));
-  for (int i = 0; i < 12; i++) f.write((uint8_t *)bloque, sizeof(bloque));
-  f.close();
-  tgArchivo = LittleFS.open(rutaDe(id), "r+");
+  tgArchivo = LittleFS.open(rutaDe(id), "w");
+  tgFranjaY = -1; tgFranjaAlto = 0; tgFilasEscritas = 0; tgErrorEscritura = false;
   jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
   int opciones = escala == 2 ? JPEG_SCALE_HALF : escala == 4 ? JPEG_SCALE_QUARTER : escala == 8 ? JPEG_SCALE_EIGHTH : 0;
   int ok = jpeg.decode(0, 0, opciones);
   jpeg.close();
+  if (tgFranjaY >= 0) tgVaciarFranja();
+  { static const uint8_t negro[480] = {0}; while (!tgErrorEscritura && tgFilasEscritas < 240) tgEscribirFila(negro); }
   tgArchivo.close();
   LittleFS.remove(TG_TEMPORAL);
+  if (tgErrorEscritura) {
+    LittleFS.remove(rutaDe(id));
+    Serial.println("[telegram] memoria llena al guardar la foto");
+    return "La memoria del marco esta llena. Borra algunas fotos desde la pagina del marco.";
+  }
   if (!ok) { LittleFS.remove(rutaDe(id)); return "No pude decodificar la foto."; }
 
   orden.push_back(id);
