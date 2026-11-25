@@ -621,7 +621,8 @@ bool tgLlamar(const String &metodo, const String &params, JsonDocument &doc, Jso
   String url = "https://api.telegram.org/bot" + token + "/" + metodo;
   if (params.length()) url += "?" + params;
   if (!http.begin(tgCliente, url)) { Serial.println("[telegram] " + metodo + ": no pude iniciar la conexion"); return false; }
-  http.setTimeout(10000);
+  http.setConnectTimeout(4000);
+  http.setTimeout(6000);
   int codigo = http.GET();
   if (codigo != 200) {
     Serial.printf("[telegram] %s: HTTP %d (%s) heap libre %u\n", metodo.c_str(), codigo,
@@ -658,9 +659,9 @@ int tgRecorteX = 0, tgRecorteY = 0;
 int tgFranjaY = -1, tgFranjaAlto = 0, tgFilasEscritas = 0;
 bool tgErrorEscritura = false;
 void tgEscribirFila(const uint8_t *datos) {
+  tgFilasEscritas++;   // siempre avanza, aunque falle la escritura (evita quedar pegado)
   if (tgErrorEscritura) return;
   if (tgArchivo.write(datos, 480) != 480) tgErrorEscritura = true;
-  tgFilasEscritas++;
 }
 void tgVaciarFranja() {
   static const uint8_t negro[480] = {0};
@@ -805,7 +806,10 @@ void revisarTelegram() {
   m["photo"][0]["height"] = true;
   m["document"]["mime_type"] = true;
   JsonDocument doc;
-  if (!tgLlamar("getUpdates", "offset=" + String(tgOffset) + "&limit=3&timeout=0&allowed_updates=%5B%22message%22%5D", doc, &filtro, tgToken)) return;
+  if (!tgLlamar("getUpdates", "offset=" + String(tgOffset) + "&limit=3&timeout=0&allowed_updates=%5B%22message%22%5D", doc, &filtro, tgToken)) {
+    tgProximo = millis() + 60000;   // si Telegram no responde, esperar 1 minuto para no trabar el marco
+    return;
+  }
 
   if (doc["result"].size()) Serial.printf("[telegram] %u mensaje(s) nuevo(s)\n", (unsigned)doc["result"].size());
   for (JsonObject u : doc["result"].as<JsonArray>()) {
