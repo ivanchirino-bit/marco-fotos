@@ -1,4 +1,4 @@
-// Pagina web del marco (copia de pagina_web/index.html). Generado automaticamente.
+// Pagina web del marco (generada desde pagina_web/index.html)
 #pragma once
 #include <Arduino.h>
 
@@ -95,6 +95,14 @@ const char PAGINA[] PROGMEM = R"MARCO(<!DOCTYPE html>
       <option value="0">No mostrar</option>
       <option value="10">10 segundos</option>
       <option value="20" selected>20 segundos</option>
+      <option value="30">30 segundos</option>
+      <option value="60">1 minuto</option>
+    </select>
+    <label for="clima">Clima después de la hora (solo WiFi, configura tu ciudad en la pestaña WiFi)</label>
+    <select id="clima">
+      <option value="0">No mostrar</option>
+      <option value="10" selected>10 segundos</option>
+      <option value="20">20 segundos</option>
       <option value="30">30 segundos</option>
       <option value="60">1 minuto</option>
     </select>
@@ -197,6 +205,20 @@ const char PAGINA[] PROGMEM = R"MARCO(<!DOCTYPE html>
           </div>
           <div class="estado" id="estadoTelegram"></div>
         </details>
+
+        <details style="margin-top:12px" id="configClima">
+          <summary>Clima de tu ciudad <span id="climaResumen" class="muted"></span></summary>
+          <p class="muted">El marco muestra el clima en una pantalla aparte, después de la hora. Los datos son de
+             <b>Open-Meteo</b> (gratis, sin registro) y se actualizan cada 30 minutos.</p>
+          <label for="climaCiudad">Ciudad</label>
+          <input type="text" id="climaCiudad" autocomplete="off" placeholder="Ej: Santiago, La Serena, Mendoza, Argentina">
+          <p class="muted">Si escribes solo la ciudad, se busca en Chile. Para otro país agrega una coma: <code>Lima, Peru</code>.</p>
+          <div class="row" style="margin-top:10px">
+            <button id="guardarClima">Guardar</button>
+            <button id="quitarClima" class="small">Quitar clima</button>
+          </div>
+          <div class="estado" id="estadoClima"></div>
+        </details>
       </div>
     </div>
 
@@ -249,6 +271,7 @@ function ajustes() {
     brillo: Math.round(+$("brillo").value * 255 / 100),
     transicion: +$("transicion").value,
     reloj: +$("reloj").value,
+    clima: +$("clima").value,
   };
 }
 function aplicarForma() {
@@ -869,6 +892,7 @@ async function detectarMarco() {
       }
       $("ssid").value = info.ssid || "";
       mostrarTelegram(info.telegram);
+      mostrarClima(info.clima);
       aplicarForma();
       if (info.modoAP) {
         $("configWifi").open = true;
@@ -1033,6 +1057,39 @@ $("quitarTelegram").addEventListener("click", async () => {
     mostrarTelegram(info.telegram);
     estado("estadoTelegram", "Bot desconectado.", "ok");
   } catch (e) { estado("estadoTelegram", "Error: " + e.message, "err"); }
+});
+
+// ---------- Clima ----------
+function mostrarClima(c) {
+  if (!c) return;
+  const sel = $("clima");
+  if (c.segundos !== undefined) {
+    if (![...sel.options].some(o => o.value === String(c.segundos))) sel.append(new Option(c.segundos + " segundos", c.segundos));
+    sel.value = String(c.segundos);
+  }
+  $("climaCiudad").placeholder = c.ciudad || "Ej: Santiago, La Serena, Mendoza, Argentina";
+  $("climaResumen").textContent = !c.ciudad ? "· sin configurar"
+    : "· " + c.ciudad.split(",")[0] + (c.ok ? ": " + Math.round(c.temp) + "°, " + c.desc.toLowerCase() : "");
+}
+$("guardarClima").addEventListener("click", async () => {
+  const ciudad = $("climaCiudad").value.trim();
+  if (!ciudad) return estado("estadoClima", "Escribe una ciudad.", "err");
+  estado("estadoClima", "Buscando la ciudad y consultando el clima...");
+  try {
+    const r = await api("/api/clima", { method: "POST", body: new URLSearchParams({ ciudad }) });
+    $("climaCiudad").value = "";
+    const info = await api("/api/info");
+    mostrarClima(info.clima);
+    estado("estadoClima", "Listo: " + r.ciudad + (r.clima ? " · ahora " + Math.round(r.temp) + "°, " + r.desc.toLowerCase() + "." : ". El clima se cargará en unos minutos."), "ok");
+  } catch (e) { estado("estadoClima", "Error: " + e.message, "err"); }
+});
+$("quitarClima").addEventListener("click", async () => {
+  try {
+    await api("/api/clima", { method: "POST", body: new URLSearchParams({ quitar: "1" }) });
+    const info = await api("/api/info");
+    mostrarClima(info.clima);
+    estado("estadoClima", "Clima desactivado.", "ok");
+  } catch (e) { estado("estadoClima", "Error: " + e.message, "err"); }
 });
 
 // ---------- Inicio ----------

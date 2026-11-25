@@ -65,6 +65,15 @@ String tgToken, tgIds, tgBot;
 long tgOffset = 0;
 unsigned long tgProximo = 0;
 const unsigned long TG_CADA_MS = 15000;
+// Clima (Open-Meteo)
+int cfgClima = 10;            // segundos de la pantalla de clima despues de la hora (0 = no mostrar)
+bool enClima = false;
+String climaCiudad, climaLat, climaLon;
+bool climaOk = false;
+float climaTemp = 0, climaMax = 0, climaMin = 0;
+int climaCodigo = 0, climaDia = 1, climaLluvia = 0;
+unsigned long climaHora = 0, climaProximo = 0;
+const unsigned long CLIMA_CADA_MS = 30UL * 60UL * 1000UL;
 std::vector<String> redesEncontradas;   // redes WiFi detectadas al iniciar
 std::vector<String> orden;   // ids de las fotos, en orden
 int indiceActual = -1;
@@ -275,16 +284,24 @@ void mostrarSiguiente() {
 
   // Al terminar la vuelta (despues de la ultima foto) se muestra la hora
   bool finVuelta = indiceActual >= 0 && indiceActual == (int)orden.size() - 1;
-  if (finVuelta && cfgReloj > 0 && !enReloj && horaValida()) {
-    if (fundido) { for (int i = 12; i >= 0; i--) { ponerBrillo(cfgBrillo * i / 12); delay(18); } }
-    detenerAnim();
-    enReloj = true;
-    dibujarReloj();
-    if (fundido) { for (int i = 0; i <= 12; i++) { ponerBrillo(cfgBrillo * i / 12); delay(18); } }
-    else ponerBrillo(cfgBrillo);
-    return;
+  // y despues el clima (pantalla aparte)
+  if (finVuelta && !enClima) {
+    int especial = 0;
+    if (!enReloj && cfgReloj > 0 && horaValida()) especial = 1;
+    else if (cfgClima > 0 && climaListo()) especial = 2;
+    if (especial) {
+      if (fundido) { for (int i = 12; i >= 0; i--) { ponerBrillo(cfgBrillo * i / 12); delay(18); } }
+      detenerAnim();
+      enReloj = especial == 1;
+      enClima = especial == 2;
+      if (enReloj) dibujarReloj(); else dibujarClima();
+      if (fundido) { for (int i = 0; i <= 12; i++) { ponerBrillo(cfgBrillo * i / 12); delay(18); } }
+      else ponerBrillo(cfgBrillo);
+      return;
+    }
   }
   enReloj = false;
+  enClima = false;
 
   indiceActual = (indiceActual + 1) % orden.size();
   if (fundido) {
@@ -312,6 +329,10 @@ void cargarAjustes() {
   tgToken = prefs.getString("tgToken", "");
   tgBot = prefs.getString("tgBot", "");
   tgIds = prefs.getString("tgIds", "");
+  cfgClima = prefs.getInt("clima", 10);
+  climaCiudad = prefs.getString("climaCiudad", "");
+  climaLat = prefs.getString("climaLat", "");
+  climaLon = prefs.getString("climaLon", "");
 }
 
 void guardarOrden() {
@@ -368,6 +389,9 @@ void apiInfo() {
   j += ",\"ssid\":" + jsonTexto(ssidGuardado);
   j += ",\"ip\":" + jsonTexto(modoAP ? WiFi.softAPIP().toString() : WiFi.localIP().toString());
   j += ",\"telegram\":{\"activo\":" + String(tgToken.length() ? "true" : "false") + ",\"bot\":" + jsonTexto(tgBot) + ",\"ids\":" + jsonTexto(tgIds) + "}";
+  j += ",\"clima\":{\"ciudad\":" + jsonTexto(climaCiudad) + ",\"segundos\":" + String(cfgClima) +
+       ",\"ok\":" + String(climaOk ? "true" : "false") + ",\"temp\":" + String(climaTemp, 1) +
+       ",\"desc\":" + jsonTexto(climaDescripcion()) + "}";
   j += ",\"fotos\":[";
   for (size_t i = 0; i < orden.size(); i++) {
     if (i) j += ",";
@@ -500,6 +524,8 @@ void apiConfig() {
   if (server.hasArg("transicion")) cfgTransicion = server.arg("transicion").toInt() ? 1 : 0;
   if (server.hasArg("reloj")) cfgReloj = constrain(server.arg("reloj").toInt(), 0, 600);
   prefs.putInt("reloj", cfgReloj);
+  if (server.hasArg("clima")) cfgClima = constrain(server.arg("clima").toInt(), 0, 600);
+  prefs.putInt("clima", cfgClima);
   prefs.putInt("pantalla", cfgPantalla);
   prefs.putInt("segundos", cfgSegundos);
   prefs.putInt("brillo", cfgBrillo);
@@ -781,11 +807,287 @@ String tgAgregarFoto(const String &fileId, int escala) {
   // mostrarla de inmediato
   detenerAnim();
   enReloj = false;
+  enClima = false;
   indiceActual = (int)orden.size() - 2;
   proximoCambio = 0;
   Serial.println("[marco] Foto de Telegram agregada: " + id);
   int quedan = (LittleFS.totalBytes() - LittleFS.usedBytes()) / (BYTES_FOTO + 512);
   return "Foto agregada al marco (" + String((int)orden.size()) + " en total, espacio para " + String(quedan) + " mas).";
+}
+
+// ---------------------------------------------------------------------
+// Clima (Open-Meteo: gratis y sin registro). Se muestra en una pantalla
+// aparte despues de la hora, al terminar cada vuelta de fotos.
+// ---------------------------------------------------------------------
+bool obtenerJson(const String &url, JsonDocument &doc, JsonDocument &filtro) {
+  WiFiClientSecure cliente;
+  cliente.setInsecure();   // sin validar certificado (ver README)
+  HTTPClient http;
+  if (!http.begin(cliente, url)) return false;
+  http.setConnectTimeout(4000);
+  http.setTimeout(6000);
+  int codigo = http.GET();
+  if (codigo != 200) {
+    Serial.printf("[clima] HTTP %d\n", codigo);
+    http.end();
+    return false;
+  }
+  String cuerpo = http.getString();
+  http.end();
+  DeserializationError e = deserializeJson(doc, cuerpo, DeserializationOption::Filter(filtro));
+  if (e) Serial.printf("[clima] JSON invalido (%s)\n", e.c_str());
+  return !e;
+}
+
+// Las letras de la pantalla no tienen tildes: "Concepción" -> "Concepcion"
+String sinTildes(const String &t) {
+  static const char *de = "\xA1\xA9\xAD\xB3\xBA\xB1\x81\x89\x8D\x93\x9A\x91\xBC\xA3\xA7\xA0\xA8\xAC\xB2\xB9";
+  static const char *a = "aeiounAEIOUNuacaeiou";
+  String r;
+  for (size_t i = 0; i < t.length(); i++) {
+    uint8_t c = t[i];
+    if (c < 0x80) { r += (char)c; continue; }
+    if (c == 0xC3 && i + 1 < t.length()) {
+      const char *p = strchr(de, t[i + 1]);
+      if (p) r += a[p - de];
+      i++;
+      continue;
+    }
+    while (i + 1 < t.length() && ((uint8_t)t[i + 1] & 0xC0) == 0x80) i++;   // otro simbolo: se omite
+  }
+  return r;
+}
+
+bool climaListo() {
+  return climaOk && climaLat.length() && millis() - climaHora < 3UL * 3600UL * 1000UL;
+}
+
+String climaDescripcion() {
+  int c = climaCodigo;
+  if (!climaOk) return "";
+  if (c == 0) return "Despejado";
+  if (c == 1) return "Poco nublado";
+  if (c == 2) return "Algo nublado";
+  if (c == 3) return "Nublado";
+  if (c == 45 || c == 48) return "Neblina";
+  if (c >= 51 && c <= 57) return "Llovizna";
+  if (c >= 61 && c <= 67) return "Lluvia";
+  if (c >= 71 && c <= 77) return "Nieve";
+  if (c >= 80 && c <= 82) return "Chubascos";
+  if (c == 85 || c == 86) return "Nieve";
+  if (c >= 95) return "Tormenta";
+  return "Clima";
+}
+
+bool actualizarClima() {
+  if (!climaLat.length()) return false;
+  JsonDocument doc, filtro;
+  filtro["current"]["temperature_2m"] = true;
+  filtro["current"]["weather_code"] = true;
+  filtro["current"]["is_day"] = true;
+  filtro["daily"]["temperature_2m_max"] = true;
+  filtro["daily"]["temperature_2m_min"] = true;
+  filtro["daily"]["precipitation_probability_max"] = true;
+  String url = "https://api.open-meteo.com/v1/forecast?latitude=" + climaLat + "&longitude=" + climaLon +
+               "&current=temperature_2m,weather_code,is_day"
+               "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+               "&timezone=auto&forecast_days=1";
+  if (!obtenerJson(url, doc, filtro) || doc["current"].isNull()) return false;
+  climaTemp = doc["current"]["temperature_2m"] | 0.0f;
+  climaCodigo = doc["current"]["weather_code"] | 0;
+  climaDia = doc["current"]["is_day"] | 1;
+  climaMax = doc["daily"]["temperature_2m_max"][0] | climaTemp;
+  climaMin = doc["daily"]["temperature_2m_min"][0] | climaTemp;
+  climaLluvia = doc["daily"]["precipitation_probability_max"][0] | 0;
+  climaOk = true;
+  climaHora = millis();
+  Serial.printf("[clima] %s: %.1f C, codigo %d\n", climaCiudad.c_str(), climaTemp, climaCodigo);
+  return true;
+}
+
+void revisarClima() {
+  if (modoAP || !climaLat.length() || millis() < climaProximo || WiFi.status() != WL_CONNECTED) return;
+  if (enClima) return;                                           // no actualizar mientras se muestra
+  if (animActiva && millis() < climaProximo + 60000) return;     // no cortar una animacion
+  climaProximo = millis() + (actualizarClima() ? CLIMA_CADA_MS : 5UL * 60UL * 1000UL);
+}
+
+// --- Dibujos del clima (hechos con figuras, sin imagenes) ---
+const uint16_t C_AMARILLO = 0xFE60, C_NUBE = 0xCE79, C_NUBE_OSCURA = 0x9CF3, C_AZUL = 0x4D9F,
+               C_GRIS = 0xBDF7, C_NARANJO = 0xFD20, C_CELESTE = 0x867F;
+
+void dibujarSol(int cx, int cy, int r) {
+  for (int i = 0; i < 8; i++) {
+    float ang = i * PI / 4;
+    int x1 = cx + cos(ang) * (r + 5), y1 = cy + sin(ang) * (r + 5);
+    int x2 = cx + cos(ang) * (r + 12), y2 = cy + sin(ang) * (r + 12);
+    gfx->drawLine(x1, y1, x2, y2, C_AMARILLO);
+    gfx->drawLine(x1 + 1, y1, x2 + 1, y2, C_AMARILLO);
+  }
+  gfx->fillCircle(cx, cy, r, C_AMARILLO);
+}
+
+void dibujarLuna(int cx, int cy, int r) {
+  gfx->fillCircle(cx, cy, r, 0xFFF0);
+  gfx->fillCircle(cx + r / 2, cy - r / 3, r * 85 / 100, 0x0000);
+}
+
+void dibujarNube(int cx, int cy, uint16_t color) {
+  gfx->fillCircle(cx - 14, cy + 4, 12, color);
+  gfx->fillCircle(cx + 2, cy - 6, 16, color);
+  gfx->fillCircle(cx + 18, cy + 4, 12, color);
+  gfx->fillRoundRect(cx - 26, cy + 2, 56, 15, 7, color);
+}
+
+void dibujarIconoClima(int cx, int cy) {
+  int c = climaCodigo;
+  bool lluvia = (c >= 51 && c <= 67) || (c >= 80 && c <= 82);
+  bool nieve = (c >= 71 && c <= 77) || c == 85 || c == 86;
+  bool tormenta = c >= 95;
+  if (c == 0) {
+    if (climaDia) dibujarSol(cx, cy, 18); else dibujarLuna(cx, cy, 20);
+    return;
+  }
+  if (c == 1 || c == 2) {
+    if (climaDia) dibujarSol(cx - 14, cy - 10, 13); else dibujarLuna(cx - 14, cy - 10, 14);
+    dibujarNube(cx + 6, cy + 4, C_NUBE);
+    return;
+  }
+  if (c == 45 || c == 48) {
+    for (int i = 0; i < 4; i++) gfx->fillRoundRect(cx - 30 + (i % 2) * 8, cy - 18 + i * 11, 52, 5, 2, C_GRIS);
+    return;
+  }
+  dibujarNube(cx, cy - 8, (lluvia || tormenta) ? C_NUBE_OSCURA : C_NUBE);
+  if (lluvia) {
+    for (int i = 0; i < 4; i++) {
+      int x = cx - 16 + i * 12;
+      gfx->drawLine(x, cy + 14, x - 4, cy + 24, C_AZUL);
+      gfx->drawLine(x + 1, cy + 14, x - 3, cy + 24, C_AZUL);
+    }
+  }
+  if (nieve) {
+    for (int i = 0; i < 4; i++) gfx->fillCircle(cx - 16 + i * 12, cy + 17 + (i % 2) * 5, 3, 0xFFFF);
+  }
+  if (tormenta) {
+    gfx->fillTriangle(cx + 4, cy + 8, cx - 8, cy + 22, cx + 1, cy + 22, C_AMARILLO);
+    gfx->fillTriangle(cx - 2, cy + 20, cx + 8, cy + 20, cx - 5, cy + 34, C_AMARILLO);
+  }
+}
+
+int anchoTexto(const String &t, const GFXfont *fuente) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  gfx->setFont(fuente);
+  gfx->getTextBounds(t, 0, 100, &x1, &y1, &w, &h);
+  return w;
+}
+
+void dibujarClima() {
+  gfx->fillScreen(0x0000);
+
+  // Ciudad (sin region ni pais, recortada si no cabe)
+  String ciudad = sinTildes(climaCiudad);
+  int coma = ciudad.indexOf(',');
+  if (coma > 0) ciudad = ciudad.substring(0, coma);
+  // si no cabe, se quitan palabras del final ("Santiago de Chile" -> "Santiago")
+  while (anchoTexto(ciudad, &FreeSansBold12pt7b) > 190 && ciudad.lastIndexOf(' ') > 0) {
+    ciudad = ciudad.substring(0, ciudad.lastIndexOf(' '));
+    String ult = ciudad.substring(ciudad.lastIndexOf(' ') + 1);
+    ult.toLowerCase();
+    if ((ult == "de" || ult == "del" || ult == "la" || ult == "el" || ult == "los" || ult == "las") && ciudad.lastIndexOf(' ') > 0)
+      ciudad = ciudad.substring(0, ciudad.lastIndexOf(' '));
+  }
+  while (ciudad.length() > 3 && anchoTexto(ciudad, &FreeSansBold12pt7b) > 190) ciudad.remove(ciudad.length() - 1);
+  textoCentrado(ciudad, 52, &FreeSansBold12pt7b, C_GRIS);
+
+  dibujarIconoClima(120, 92);
+
+  // Temperatura actual con el simbolo de grados (la letra no lo trae)
+  String t = String((int)lroundf(climaTemp));
+  gfx->setFont(&FreeSansBold24pt7b);
+  int16_t x1, y1;
+  uint16_t w, h;
+  gfx->getTextBounds(t, 0, 160, &x1, &y1, &w, &h);
+  int x = (240 - ((int)w + 14)) / 2 - x1;
+  gfx->setTextColor(0xFFFF);
+  gfx->setCursor(x, 160);
+  gfx->print(t);
+  int gx = x + x1 + w + 9;
+  gfx->drawCircle(gx, 160 - 29, 5, 0xFFFF);
+  gfx->drawCircle(gx, 160 - 29, 4, 0xFFFF);
+
+  // Descripcion (o probabilidad de lluvia si esta nublado y puede llover)
+  String desc = climaDescripcion();
+  if (climaCodigo < 51 && climaLluvia >= 40) desc = "Lluvia " + String(climaLluvia) + "%";
+  textoCentrado(desc, 190, &FreeSansBold12pt7b, C_NARANJO);
+
+  // Minima (celeste) / maxima (naranjo) del dia
+  String sMin = String((int)lroundf(climaMin)), sSep = " / ", sMax = String((int)lroundf(climaMax));
+  int total = anchoTexto(sMin, &FreeSansBold12pt7b) + anchoTexto(sSep, &FreeSansBold12pt7b) + anchoTexto(sMax, &FreeSansBold12pt7b);
+  gfx->setFont(&FreeSansBold12pt7b);
+  gfx->setCursor((240 - total) / 2, 216);
+  gfx->setTextColor(C_CELESTE); gfx->print(sMin);
+  gfx->setTextColor(C_GRIS); gfx->print(sSep);
+  gfx->setTextColor(C_NARANJO); gfx->print(sMax);
+
+  gfx->setFont((const GFXfont *)nullptr);   // vuelve a la letra normal para los mensajes
+}
+
+// POST /api/clima  ciudad=...  (vacio o quitar=1 para desactivar)
+void apiClima() {
+  String ciudad = server.arg("ciudad");
+  ciudad.trim();
+  if (server.hasArg("quitar") || !ciudad.length()) {
+    climaCiudad = ""; climaLat = ""; climaLon = ""; climaOk = false;
+    prefs.remove("climaCiudad"); prefs.remove("climaLat"); prefs.remove("climaLon");
+    server.send(200, "application/json", "{\"ok\":true}");
+    return;
+  }
+  // "Ciudad, Pais" permite elegir el pais; si no se indica, se prefiere Chile
+  String nombre = ciudad, pais = "";
+  int coma = ciudad.indexOf(',');
+  if (coma >= 0) { nombre = ciudad.substring(0, coma); pais = ciudad.substring(coma + 1); nombre.trim(); pais.trim(); }
+  pais = sinTildes(pais);
+  pais.toLowerCase();
+
+  JsonDocument doc, filtro;
+  JsonObject f = filtro["results"][0].to<JsonObject>();
+  f["name"] = true; f["latitude"] = true; f["longitude"] = true;
+  f["country"] = true; f["country_code"] = true; f["admin1"] = true;
+  if (!obtenerJson("https://geocoding-api.open-meteo.com/v1/search?count=10&language=es&format=json&name=" + urlCodificar(nombre), doc, filtro)) {
+    server.send(400, "text/plain", "No pude consultar el servicio del clima. Revisa que el marco tenga internet.");
+    return;
+  }
+  JsonArray res = doc["results"].as<JsonArray>();
+  if (res.isNull() || res.size() == 0) {
+    server.send(400, "text/plain", "No encontre esa ciudad. Prueba escribiendola de otra forma.");
+    return;
+  }
+  JsonObject elegido = res[0];
+  for (JsonObject c : res) {
+    String cc = c["country_code"] | "";
+    String cn = sinTildes(c["country"] | "");
+    cc.toLowerCase(); cn.toLowerCase();
+    bool coincide = pais.length() ? (cc == pais || cn.indexOf(pais) >= 0) : cc == "cl";
+    if (coincide) { elegido = c; break; }
+  }
+  String n = elegido["name"] | "";
+  String region = elegido["admin1"] | "";
+  String paisNombre = elegido["country"] | "";
+  climaCiudad = n;
+  if (region.length() && region != n) climaCiudad += ", " + region;
+  if (paisNombre.length()) climaCiudad += ", " + paisNombre;
+  climaLat = String(elegido["latitude"].as<float>(), 4);
+  climaLon = String(elegido["longitude"].as<float>(), 4);
+  prefs.putString("climaCiudad", climaCiudad);
+  prefs.putString("climaLat", climaLat);
+  prefs.putString("climaLon", climaLon);
+  climaOk = false;
+  bool ok = actualizarClima();
+  climaProximo = millis() + (ok ? CLIMA_CADA_MS : 5UL * 60UL * 1000UL);
+  server.send(200, "application/json", "{\"ok\":true,\"ciudad\":" + jsonTexto(climaCiudad) +
+              ",\"clima\":" + String(ok ? "true" : "false") + ",\"temp\":" + String(climaTemp, 1) +
+              ",\"desc\":" + jsonTexto(climaDescripcion()) + "}");
 }
 
 void revisarTelegram() {
@@ -977,6 +1279,7 @@ void setup() {
   server.on("/api/config", HTTP_POST, apiConfig);
   server.on("/api/wifi", HTTP_POST, apiWifi);
   server.on("/api/telegram", HTTP_POST, apiTelegram);
+  server.on("/api/clima", HTTP_POST, apiClima);
   server.onNotFound(noEncontrado);
   server.begin();
   Serial.println("[marco] Servidor web listo");
@@ -999,11 +1302,13 @@ void loop() {
   avanzarAnim();
   actualizarReloj();
   revisarTelegram();
+  revisarClima();
 
   if (millis() >= proximoCambio) {
     mostrarSiguiente();
     unsigned long dur = (unsigned long)cfgSegundos * 1000UL;
     if (enReloj) dur = (unsigned long)cfgReloj * 1000UL;
+    else if (enClima) dur = (unsigned long)cfgClima * 1000UL;
     else if (animActiva) {   // una animacion se muestra al menos una vuelta completa
       unsigned long vuelta = (unsigned long)animCuadros * animMs;
       if (dur < vuelta) dur = vuelta;
