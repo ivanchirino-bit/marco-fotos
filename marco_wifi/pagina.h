@@ -1,0 +1,999 @@
+// Pagina web del marco (copia de pagina_web/index.html). Generado automaticamente.
+#pragma once
+#include <Arduino.h>
+
+const char PAGINA[] PROGMEM = R"MARCO(<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marco de fotos ESP32</title>
+<style>
+  :root {
+    --bg: #f4f1ec; --card: #ffffff; --ink: #1f2328; --muted: #6b7280;
+    --line: #e5e1da; --accent: #d9622b; --accent-ink: #ffffff; --ok: #2f8a4c; --err: #c0392b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16181c; --card: #1f2227; --ink: #eceff3; --muted: #9aa3ad; --line: #30343b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--ink); line-height: 1.45; }
+  header { padding: 20px 16px 8px; max-width: 980px; margin: 0 auto; }
+  header h1 { margin: 0; font-size: 1.5rem; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  main { max-width: 980px; margin: 0 auto; padding: 8px 16px 40px; display: grid; gap: 16px;
+         grid-template-columns: 1fr; }
+  @media (min-width: 860px) { main { grid-template-columns: 340px 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 1.05rem; }
+  .muted { color: var(--muted); font-size: .9rem; }
+  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+         border-radius: 10px; padding: 9px 14px; cursor: pointer; display: inline-flex; gap: 6px;
+         align-items: center; text-decoration: none; }
+  button.primary, .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.small { padding: 4px 9px; font-size: .85rem; }
+  label { display: block; font-size: .9rem; margin: 10px 0 4px; }
+  select, input[type=number], input[type=text], input[type=password] {
+         font: inherit; width: 100%; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line);
+         background: var(--bg); color: var(--ink); }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  @media (max-width: 859px) { #fotosCard { order: -1; } }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .editor { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .lienzo { position: relative; width: 280px; height: 280px; touch-action: none; }
+  .lienzo canvas { width: 280px; height: 280px; border-radius: 10px; background: #000; cursor: grab; display: block; }
+  .lienzo.redonda canvas { border-radius: 50%; }
+  .lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px;
+           grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .lista li { border: 1px solid var(--line); border-radius: 10px; padding: 8px; display: flex; flex-direction: column;
+              align-items: center; gap: 6px; }
+  .lista li.sel { outline: 2px solid var(--accent); }
+  .lista canvas { width: 96px; height: 96px; border-radius: 8px; background: #000; cursor: pointer; }
+  .redondas .lista canvas { border-radius: 50%; }
+  .lista .nombre { font-size: .8rem; color: var(--muted); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tabs button.activa { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .panel { display: none; } .panel.activo { display: block; }
+  .estado { margin-top: 10px; font-size: .9rem; min-height: 1.2em; }
+  .estado.ok { color: var(--ok); } .estado.err { color: var(--err); }
+  .barra { height: 8px; background: var(--line); border-radius: 6px; overflow: hidden; margin-top: 6px; }
+  .barra > div { height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+  .vacio { text-align: center; color: var(--muted); padding: 24px 8px; border: 1px dashed var(--line); border-radius: 10px; }
+  .aviso { background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 10px; padding: 10px 12px; font-size: .9rem; }
+  code { background: var(--bg); padding: 1px 5px; border-radius: 5px; }
+  .ancho { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🖼️ Marco de fotos ESP32</h1>
+  <p id="modoTexto">Prepara tus fotos para la pantalla de 240×240.</p>
+</header>
+
+<main id="app">
+  <!-- Columna izquierda: ajustes y editor -->
+  <section class="card">
+    <h2>1. Pantalla y ajustes</h2>
+    <label for="pantalla">Pantalla</label>
+    <select id="pantalla">
+      <option value="1">Cuadrada ST7789 1.54" (240×240)</option>
+      <option value="2">Redonda GC9A01 1.28" (240×240)</option>
+    </select>
+    <label for="segundos">Segundos por foto: <b id="segundosVal">5</b></label>
+    <input type="range" id="segundos" min="1" max="60" value="5">
+    <label for="brillo">Brillo (solo pantalla cuadrada): <b id="brilloVal">100</b>%</label>
+    <input type="range" id="brillo" min="5" max="100" value="100">
+    <label for="transicion">Transición</label>
+    <select id="transicion">
+      <option value="1">Fundido</option>
+      <option value="0">Directo (sin efecto)</option>
+    </select>
+    <label for="reloj">Hora al terminar cada vuelta (solo WiFi)</label>
+    <select id="reloj">
+      <option value="0">No mostrar</option>
+      <option value="10">10 segundos</option>
+      <option value="20" selected>20 segundos</option>
+      <option value="30">30 segundos</option>
+      <option value="60">1 minuto</option>
+    </select>
+
+    <h2 style="margin-top:18px">2. Encuadre</h2>
+    <div class="editor">
+      <div class="lienzo" id="lienzoBox"><canvas id="lienzo" width="240" height="240"></canvas></div>
+      <div style="width:280px">
+        <label for="zoom">Zoom</label>
+        <input type="range" id="zoom" min="1" max="4" step="0.01" value="1" disabled>
+      </div>
+      <div class="row">
+        <button id="girar" class="small" disabled>⟳ Girar</button>
+        <button id="centrar" class="small" disabled>⊙ Centrar</button>
+      </div>
+      <p class="muted" id="ayudaEditor">Agrega fotos y toca una para encuadrarla. Arrastra para mover, usa el zoom para acercar.</p>
+    </div>
+  </section>
+
+  <!-- Columna derecha: fotos -->
+  <section class="card" id="fotosCard">
+    <h2>3. Fotos <span class="muted" id="contador"></span></h2>
+    <div class="row" style="margin-bottom:12px">
+      <label class="btn primary" for="archivos" style="margin:0">＋ Agregar fotos, stickers o videos</label>
+      <input type="file" id="archivos" accept="image/*,video/*,.heic,.heif,.webp,.gif" multiple hidden>
+      <button id="borrarTodo" class="small">Quitar todas</button>
+    </div>
+    <div class="estado" id="estadoCarga" style="margin:-4px 0 10px"></div>
+    <ul class="lista" id="lista"></ul>
+    <div class="vacio" id="vacio">Todavía no hay fotos. Agrega algunas desde tu galería o tu computador.</div>
+  </section>
+
+  <!-- Salidas -->
+  <section class="card ancho">
+    <h2>4. Enviar al marco</h2>
+    <div class="tabs">
+      <button data-tab="wifi" class="activa">📶 Por WiFi</button>
+      <button data-tab="cable">🔌 Por cable (Arduino IDE)</button>
+      <button data-tab="sd">💾 Tarjeta microSD</button>
+    </div>
+
+    <!-- WiFi -->
+    <div class="panel activo" id="panel-wifi">
+      <div id="wifiFuera">
+        <p>Para enviar por WiFi, el ESP32 debe tener cargado el programa <code>marco_wifi</code>.
+           Este mismo editor viene dentro del marco: ábrelo desde el celular o el Mac conectado a la misma red.</p>
+        <div class="row">
+          <a class="btn primary" href="http://marco.local" target="_blank" rel="noopener">Abrir http://marco.local</a>
+          <span class="muted">o la dirección IP que muestra la pantalla al encender.</span>
+        </div>
+        <p class="aviso" style="margin-top:12px">Desde esta página de internet no se puede enviar directo al marco:
+          los navegadores bloquean que una página segura (https) se comunique con aparatos de tu casa (http).
+          Por eso el marco trae su propia copia de este editor.</p>
+      </div>
+      <div id="wifiDentro" hidden>
+        <p class="muted" id="infoMarco"></p>
+        <div class="barra"><div id="barraEspacio"></div></div>
+        <div class="row" style="margin-top:12px">
+          <button class="primary" id="enviarWifi">Enviar fotos nuevas al marco</button>
+          <button id="guardarAjustes">Guardar ajustes en el marco</button>
+        </div>
+        <div class="barra" id="barraEnvioBox" hidden><div id="barraEnvio"></div></div>
+        <div class="estado" id="estadoWifi"></div>
+
+        <h2 style="margin-top:18px">Fotos guardadas en el marco</h2>
+        <ul class="lista" id="listaMarco"></ul>
+        <div class="vacio" id="vacioMarco" hidden>El marco no tiene fotos todavía.</div>
+        <div class="row" style="margin-top:10px">
+          <button id="guardarOrden" disabled>Guardar nuevo orden</button>
+        </div>
+
+        <details style="margin-top:18px" id="configWifi">
+          <summary>Configurar WiFi del marco</summary>
+          <label for="ssid">Nombre de la red (SSID)</label>
+          <input type="text" id="ssid" autocomplete="off">
+          <label for="clave">Contraseña</label>
+          <input type="password" id="clave" autocomplete="new-password">
+          <div class="row" style="margin-top:10px">
+            <button id="guardarWifi">Guardar y reiniciar el marco</button>
+          </div>
+          <p class="muted">Si el marco no logra conectarse, crea su propia red <b>MarcoFotos</b> (clave <code>marco1234</code>)
+             y su página queda en <code>http://192.168.4.1</code>.</p>
+        </details>
+      </div>
+    </div>
+
+    <!-- Cable -->
+    <div class="panel" id="panel-cable">
+      <p>Descarga un sketch listo con tus fotos adentro. Ábrelo en Arduino IDE y súbelo con la flecha →.</p>
+      <ol class="muted">
+        <li>Descomprime el .zip: queda la carpeta <code>marco_cable</code>.</li>
+        <li>Abre <code>marco_cable.ino</code> en Arduino IDE.</li>
+        <li>Placa <b>ESP32 Dev Module</b>, esquema de memoria <b>Huge APP (3MB No OTA)</b>.</li>
+        <li>Sube con la flecha →.</li>
+      </ol>
+      <p class="muted">Caben hasta unas 22 fotos (cada una ocupa 115 KB).</p>
+      <button class="primary" id="descargarCable">Descargar sketch (.zip)</button>
+      <div class="estado" id="estadoCable"></div>
+    </div>
+
+    <!-- SD -->
+    <div class="panel" id="panel-sd">
+      <p>Descarga las fotos ya convertidas y cópialas a la tarjeta microSD. El ESP32 debe tener el programa <code>marco_sd</code>.</p>
+      <ol class="muted">
+        <li>Descomprime el .zip: trae la carpeta <code>fotos</code> y el archivo <code>config.txt</code>.</li>
+        <li>Copia ambos a la <b>raíz</b> de la microSD (formateada en FAT32).</li>
+        <li>Pon la tarjeta en el lector y reinicia el ESP32.</li>
+      </ol>
+      <button class="primary" id="descargarSD">Descargar para microSD (.zip)</button>
+      <div class="estado" id="estadoSD"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const LADO = 240;
+const $ = (id) => document.getElementById(id);
+
+// ---------- Estado ----------
+const fotos = [];        // {id, nombre, img, zoom, ox, oy, rot}
+let selId = null;
+let enMarco = false;     // true si esta pagina la sirve el ESP32
+let infoMarco = null;
+let fotosMarco = [];     // ids en el marco (orden)
+let sigId = 1;
+
+// ---------- Ajustes ----------
+function ajustes() {
+  return {
+    pantalla: +$("pantalla").value,
+    segundos: +$("segundos").value,
+    brillo: Math.round(+$("brillo").value * 255 / 100),
+    transicion: +$("transicion").value,
+    reloj: +$("reloj").value,
+  };
+}
+function aplicarForma() {
+  const redonda = $("pantalla").value === "2";
+  $("lienzoBox").classList.toggle("redonda", redonda);
+  document.body.classList.toggle("redondas", redonda);
+}
+$("pantalla").addEventListener("change", aplicarForma);
+$("segundos").addEventListener("input", e => $("segundosVal").textContent = e.target.value);
+$("brillo").addEventListener("input", e => $("brilloVal").textContent = e.target.value);
+
+// ---------- Cargar fotos ----------
+$("archivos").addEventListener("change", async (e) => {
+  const archivos = [...e.target.files];
+  e.target.value = "";
+  const fallidas = [];
+  for (let i = 0; i < archivos.length; i++) {
+    const f = archivos[i];
+    estado("estadoCarga", "Abriendo " + (i + 1) + " de " + archivos.length + "...");
+    try {
+      const medio = await abrirMedio(f, (msg) => estado("estadoCarga", msg));
+      const foto = Object.assign({ id: sigId++, nombre: f.name, zoom: 1, ox: 0, oy: 0, rot: 0, enviada: false }, medio);
+      fotos.push(foto);
+      if (selId === null) selId = foto.id;
+      refrescarLista();
+      dibujarEditor();
+    } catch (err) {
+      fallidas.push(f.name);
+    }
+  }
+  if (fallidas.length) {
+    estado("estadoCarga", "No se pudieron abrir: " + fallidas.join(", "), "err");
+  } else {
+    estado("estadoCarga", archivos.length + (archivos.length === 1 ? " archivo agregado." : " archivos agregados."), "ok");
+  }
+});
+function esHeic(f) {
+  return /image\/hei[cf]/i.test(f.type) || /\.hei[cf]$/i.test(f.name);
+}
+// ---------- Animaciones (stickers WebP, GIF y videos) ----------
+const FPS_MAX = 15;          // cuadros por segundo como maximo
+const MAX_CUADROS = 120;     // limite por animacion
+const MAX_SEG_VIDEO = 6;     // se toman los primeros segundos del video
+const LADO_CAPTURA = 480;    // resolucion guardada para poder hacer zoom
+
+function esVideo(f) { return /^video\//i.test(f.type) || /\.(mp4|mov|m4v|webm)$/i.test(f.name); }
+function esAnimable(f) { return /image\/(gif|webp)/i.test(f.type) || /\.(gif|webp)$/i.test(f.name); }
+
+// Copia una imagen, cuadro o video a un canvas reducido (ahorra memoria)
+function capturar(src, w, h) {
+  const k = Math.min(1, LADO_CAPTURA / Math.min(w, h));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+  c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}
+
+// Elige cuadros a intervalos parejos (como maximo FPS_MAX por segundo)
+function remuestrear(fuente) {
+  const total = fuente.reduce((a, x) => a + x.dur, 0);
+  const paso = Math.max(total / fuente.length, 1000 / FPS_MAX);
+  const n = Math.max(2, Math.min(MAX_CUADROS, Math.round(total / paso)));
+  const ms = Math.round(total / n);
+  const cuadros = [];
+  for (let k = 0; k < n; k++) {
+    const t = k * ms;
+    let acum = 0, idx = 0;
+    while (idx < fuente.length - 1 && acum + fuente[idx].dur <= t) { acum += fuente[idx].dur; idx++; }
+    cuadros.push(fuente[idx].img);
+  }
+  return { cuadros, ms };
+}
+
+async function cuadrosAnimados(f, avisar) {
+  if (!("ImageDecoder" in window)) return null;
+  const tipo = /webp/i.test(f.type) || /\.webp$/i.test(f.name) ? "image/webp" : "image/gif";
+  const dec = new ImageDecoder({ data: await f.arrayBuffer(), type: tipo });
+  await dec.tracks.ready;
+  const n = dec.tracks.selectedTrack.frameCount;
+  if (n < 2) { dec.close(); return null; }
+  const fuente = [];
+  for (let i = 0; i < n; i++) {
+    avisar("Leyendo " + f.name + ": cuadro " + (i + 1) + " de " + n + "...");
+    const { image } = await dec.decode({ frameIndex: i });
+    fuente.push({ img: capturar(image, image.displayWidth, image.displayHeight), dur: Math.max(20, (image.duration || 100000) / 1000) });
+    image.close();
+  }
+  dec.close();
+  return remuestrear(fuente);
+}
+
+async function cuadrosVideo(f, avisar) {
+  const v = document.createElement("video");
+  v.muted = true; v.playsInline = true; v.preload = "auto";
+  v.src = URL.createObjectURL(f);
+  await new Promise((ok, mal) => { v.onloadeddata = ok; v.onerror = () => mal(new Error("video")); });
+  const dur = Math.min(v.duration || 0, MAX_SEG_VIDEO);
+  const fps = 12, ms = Math.round(1000 / fps);
+  const cuadros = [];
+  for (let t = 0; t < dur && cuadros.length < MAX_CUADROS; t += 1 / fps) {
+    v.currentTime = t;
+    await new Promise(ok => { v.onseeked = ok; });
+    avisar("Leyendo video: " + t.toFixed(1) + " de " + dur.toFixed(1) + " s...");
+    cuadros.push(capturar(v, v.videoWidth, v.videoHeight));
+  }
+  URL.revokeObjectURL(v.src);
+  if (cuadros.length < 2) throw new Error("video muy corto");
+  return { cuadros, ms };
+}
+
+// Lector propio de WebP animado (stickers de WhatsApp). Se usa cuando el navegador
+// no ofrece ImageDecoder, que solo existe en paginas https (la del marco es http).
+// Separa cada cuadro, lo decodifica como WebP normal y lo compone sobre un lienzo.
+async function cuadrosWebP(f, avisar) {
+  const buf = new Uint8Array(await f.arrayBuffer());
+  const dv = new DataView(buf.buffer);
+  const tag = (o) => String.fromCharCode(buf[o], buf[o + 1], buf[o + 2], buf[o + 3]);
+  const u24 = (o) => buf[o] | (buf[o + 1] << 8) | (buf[o + 2] << 16);
+  if (buf.length < 30 || tag(0) !== "RIFF" || tag(8) !== "WEBP") return null;
+  let o = 12, ancho = 0, alto = 0;
+  const partes = [];
+  while (o + 8 <= buf.length) {
+    const id = tag(o), largo = dv.getUint32(o + 4, true), d = o + 8;
+    if (id === "VP8X") { ancho = 1 + u24(d + 4); alto = 1 + u24(d + 7); }
+    else if (id === "ANMF") {
+      partes.push({
+        x: 2 * u24(d), y: 2 * u24(d + 3), w: 1 + u24(d + 6), h: 1 + u24(d + 9),
+        dur: u24(d + 12) || 100, mezclar: !(buf[d + 15] & 2), limpiar: !!(buf[d + 15] & 1),
+        datos: buf.subarray(d + 16, d + largo),
+      });
+    }
+    o = d + largo + (largo & 1);
+  }
+  if (partes.length < 2 || !ancho) return null;
+  const lienzoAnim = document.createElement("canvas");
+  lienzoAnim.width = ancho; lienzoAnim.height = alto;
+  const cx = lienzoAnim.getContext("2d");
+  const fuente = [];
+  for (let i = 0; i < partes.length; i++) {
+    const p = partes[i];
+    avisar("Leyendo " + f.name + ": cuadro " + (i + 1) + " de " + partes.length + "...");
+    // Arma un WebP suelto con los datos del cuadro (VP8X si trae transparencia)
+    const conAlfa = String.fromCharCode(p.datos[0], p.datos[1], p.datos[2], p.datos[3]) === "ALPH";
+    const extra = conAlfa ? 18 : 0;
+    const suelto = new Uint8Array(12 + extra + p.datos.length);
+    const sv = new DataView(suelto.buffer);
+    suelto.set([82, 73, 70, 70], 0);                 // RIFF
+    sv.setUint32(4, 4 + extra + p.datos.length, true);
+    suelto.set([87, 69, 66, 80], 8);                 // WEBP
+    if (conAlfa) {
+      suelto.set([86, 80, 56, 88], 12);              // VP8X
+      sv.setUint32(16, 10, true);
+      suelto[20] = 0x10;                             // tiene alfa
+      const w1 = p.w - 1, h1 = p.h - 1;
+      suelto.set([w1 & 255, (w1 >> 8) & 255, (w1 >> 16) & 255, h1 & 255, (h1 >> 8) & 255, (h1 >> 16) & 255], 24);
+    }
+    suelto.set(p.datos, 12 + extra);
+    const img = await cargarImagen(new Blob([suelto], { type: "image/webp" }));
+    if (!p.mezclar) cx.clearRect(p.x, p.y, p.w, p.h);
+    cx.drawImage(img, p.x, p.y);
+    URL.revokeObjectURL(img.src);
+    fuente.push({ img: capturar(lienzoAnim, ancho, alto), dur: Math.max(20, p.dur) });
+    if (p.limpiar) cx.clearRect(p.x, p.y, p.w, p.h);
+  }
+  return remuestrear(fuente);
+}
+
+// Devuelve { tipo: "foto", img } o { tipo: "anim", img, cuadros, ms }
+async function abrirMedio(f, avisar) {
+  if (esVideo(f)) {
+    const a = await cuadrosVideo(f, avisar);
+    return { tipo: "anim", img: a.cuadros[0], cuadros: a.cuadros, ms: a.ms };
+  }
+  if (esAnimable(f)) {
+    let a = null;
+    if ("ImageDecoder" in window) {
+      try { a = await cuadrosAnimados(f, avisar); } catch (e) { a = null; }
+    }
+    const esWebp = /webp/i.test(f.type) || /\.webp$/i.test(f.name);
+    if (!a && esWebp) a = await cuadrosWebP(f, avisar);
+    if (a) return { tipo: "anim", img: a.cuadros[0], cuadros: a.cuadros, ms: a.ms };
+    if (!esWebp && !("ImageDecoder" in window)) avisar("Nota: este navegador no puede leer los cuadros de un GIF aquí; se agrega como foto fija.");
+  }
+  return { tipo: "foto", img: await abrirFoto(f, avisar) };
+}
+
+// Archivo .anm para el marco: "ANM1", cuadros (uint16), ms por cuadro (uint16),
+// posiciones (uint32 x cuadros+1) y luego cada cuadro como JPG de 240x240.
+async function anmDe(foto, avisar) {
+  const c = document.createElement("canvas");
+  c.width = LADO; c.height = LADO;
+  const ctx = c.getContext("2d");
+  const jpgs = [];
+  for (let i = 0; i < foto.cuadros.length; i++) {
+    renderFoto(Object.assign({}, foto, { img: foto.cuadros[i] }), ctx);
+    let calidad = 0.8, blob;
+    do {
+      blob = await new Promise(ok => c.toBlob(ok, "image/jpeg", calidad));
+      calidad -= 0.15;
+    } while (blob.size > 44000 && calidad > 0.3);
+    jpgs.push(new Uint8Array(await blob.arrayBuffer()));
+    if (avisar) avisar("Preparando animación: cuadro " + (i + 1) + " de " + foto.cuadros.length + "...");
+  }
+  const n = jpgs.length;
+  const cab = 8 + 4 * (n + 1);
+  const total = cab + jpgs.reduce((a, j) => a + j.length, 0);
+  const buf = new Uint8Array(total);
+  const dv = new DataView(buf.buffer);
+  buf.set([65, 78, 77, 49], 0);           // "ANM1"
+  dv.setUint16(4, n, true);
+  dv.setUint16(6, foto.ms, true);
+  let pos = 0;
+  for (let i = 0; i < n; i++) { dv.setUint32(8 + 4 * i, pos, true); buf.set(jpgs[i], cab + pos); pos += jpgs[i].length; }
+  dv.setUint32(8 + 4 * n, pos, true);
+  return buf;
+}
+
+// Vista previa animada en el editor y las miniaturas
+let cuadroPrevia = 0;
+setInterval(() => {
+  const f = fotoSel();
+  if (!f || f.tipo !== "anim" || arrastre) return;
+  cuadroPrevia = (cuadroPrevia + 1) % f.cuadros.length;
+  renderFoto(Object.assign({}, f, { img: f.cuadros[cuadroPrevia] }), lctx);
+}, 90);
+
+async function abrirFoto(f, avisar) {
+  try {
+    return await cargarImagen(f);
+  } catch (err) {
+    // Chrome y Firefox no abren HEIC (fotos del iPhone): se convierten a JPG aqui mismo
+    if (!esHeic(f)) throw err;
+    avisar("Convirtiendo " + f.name + " (HEIC) a JPG...");
+    const heic2any = await cargarScript("https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js", "heic2any");
+    let jpg = await heic2any({ blob: f, toType: "image/jpeg", quality: 0.92 });
+    if (Array.isArray(jpg)) jpg = jpg[0];
+    return await cargarImagen(jpg);
+  }
+}
+const scriptsCargados = {};
+function cargarScript(src, global) {
+  if (window[global]) return Promise.resolve(window[global]);
+  if (!scriptsCargados[src]) scriptsCargados[src] = new Promise((ok, mal) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = () => ok(window[global]);
+    s.onerror = () => { delete scriptsCargados[src]; mal(new Error("No se pudo cargar " + src)); };
+    document.head.append(s);
+  });
+  return scriptsCargados[src];
+}
+function cargarImagen(archivo) {
+  return new Promise((ok, mal) => {
+    const url = URL.createObjectURL(archivo);
+    const img = new Image();
+    img.onload = () => ok(img);
+    img.onerror = mal;
+    img.src = url;
+  });
+}
+
+// ---------- Render 240x240 ----------
+function renderFoto(foto, ctx) {
+  ctx.save();
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, LADO, LADO);
+  const girada = foto.rot % 180 !== 0;
+  const iw = foto.img.naturalWidth || foto.img.width, ih = foto.img.naturalHeight || foto.img.height;
+  const w = girada ? ih : iw;
+  const h = girada ? iw : ih;
+  const escala = Math.max(LADO / w, LADO / h) * foto.zoom;
+  ctx.translate(LADO / 2 + foto.ox, LADO / 2 + foto.oy);
+  ctx.rotate(foto.rot * Math.PI / 180);
+  ctx.scale(escala, escala);
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(foto.img, -iw / 2, -ih / 2);
+  ctx.restore();
+}
+function limitar(foto) {
+  // evita bordes negros: la foto siempre cubre los 240x240
+  const girada = foto.rot % 180 !== 0;
+  const iw = foto.img.naturalWidth || foto.img.width, ih = foto.img.naturalHeight || foto.img.height;
+  const w = girada ? ih : iw;
+  const h = girada ? iw : ih;
+  const escala = Math.max(LADO / w, LADO / h) * foto.zoom;
+  const mx = Math.max(0, (w * escala - LADO) / 2);
+  const my = Math.max(0, (h * escala - LADO) / 2);
+  foto.ox = Math.min(mx, Math.max(-mx, foto.ox));
+  foto.oy = Math.min(my, Math.max(-my, foto.oy));
+}
+function rgb565(foto) {
+  const c = document.createElement("canvas");
+  c.width = LADO; c.height = LADO;
+  const ctx = c.getContext("2d");
+  renderFoto(foto, ctx);
+  const px = ctx.getImageData(0, 0, LADO, LADO).data;
+  const out = new Uint16Array(LADO * LADO);
+  for (let i = 0, j = 0; i < out.length; i++, j += 4) {
+    out[i] = ((px[j] & 0xF8) << 8) | ((px[j + 1] & 0xFC) << 3) | (px[j + 2] >> 3);
+  }
+  return out; // little-endian, igual que la memoria del ESP32
+}
+
+// ---------- Editor ----------
+const lienzo = $("lienzo"), lctx = lienzo.getContext("2d");
+function fotoSel() { return fotos.find(f => f.id === selId) || null; }
+function dibujarEditor() {
+  const f = fotoSel();
+  const hay = !!f;
+  $("zoom").disabled = $("girar").disabled = $("centrar").disabled = !hay;
+  if (!hay) { lctx.fillStyle = "#000"; lctx.fillRect(0, 0, LADO, LADO); return; }
+  $("zoom").value = f.zoom;
+  renderFoto(f, lctx);
+}
+$("zoom").addEventListener("input", e => {
+  const f = fotoSel(); if (!f) return;
+  f.zoom = +e.target.value; limitar(f); dibujarEditor(); refrescarMiniatura(f);
+});
+$("girar").addEventListener("click", () => {
+  const f = fotoSel(); if (!f) return;
+  f.rot = (f.rot + 90) % 360; f.ox = f.oy = 0; dibujarEditor(); refrescarMiniatura(f);
+});
+$("centrar").addEventListener("click", () => {
+  const f = fotoSel(); if (!f) return;
+  f.ox = f.oy = 0; f.zoom = 1; dibujarEditor(); refrescarMiniatura(f);
+});
+// arrastrar (mouse y dedo)
+let arrastre = null;
+lienzo.addEventListener("pointerdown", e => {
+  if (!fotoSel()) return;
+  arrastre = { x: e.clientX, y: e.clientY };
+  lienzo.setPointerCapture(e.pointerId);
+  lienzo.style.cursor = "grabbing";
+});
+lienzo.addEventListener("pointermove", e => {
+  if (!arrastre) return;
+  const f = fotoSel(); if (!f) return;
+  const k = LADO / lienzo.clientWidth;
+  f.ox += (e.clientX - arrastre.x) * k;
+  f.oy += (e.clientY - arrastre.y) * k;
+  arrastre = { x: e.clientX, y: e.clientY };
+  limitar(f); dibujarEditor();
+});
+const soltar = () => {
+  if (!arrastre) return;
+  arrastre = null; lienzo.style.cursor = "grab";
+  const f = fotoSel(); if (f) refrescarMiniatura(f);
+};
+lienzo.addEventListener("pointerup", soltar);
+lienzo.addEventListener("pointercancel", soltar);
+lienzo.addEventListener("wheel", e => {
+  const f = fotoSel(); if (!f) return;
+  e.preventDefault();
+  f.zoom = Math.min(4, Math.max(1, f.zoom * (e.deltaY < 0 ? 1.06 : 0.94)));
+  limitar(f); dibujarEditor(); refrescarMiniatura(f);
+}, { passive: false });
+
+// ---------- Lista de fotos ----------
+function refrescarLista() {
+  const ul = $("lista");
+  ul.innerHTML = "";
+  fotos.forEach((f, i) => {
+    const li = document.createElement("li");
+    if (f.id === selId) li.classList.add("sel");
+    const c = document.createElement("canvas");
+    c.width = LADO; c.height = LADO; c.dataset.id = f.id;
+    renderFoto(f, c.getContext("2d"));
+    c.title = "Encuadrar";
+    c.addEventListener("click", () => { selId = f.id; refrescarLista(); dibujarEditor(); });
+    const nom = document.createElement("div");
+    nom.className = "nombre"; nom.textContent = (i + 1) + ". " + (f.tipo === "anim" ? "▶ " : "") + f.nombre + (f.enviada ? " ✓" : "");
+    const fila = document.createElement("div");
+    fila.className = "row";
+    fila.append(
+      boton("▲", "Subir", () => mover(i, -1), i === 0),
+      boton("▼", "Bajar", () => mover(i, 1), i === fotos.length - 1),
+      boton("✕", "Quitar", () => quitar(i)),
+    );
+    li.append(c, nom, fila);
+    ul.append(li);
+  });
+  $("vacio").hidden = fotos.length > 0;
+  $("contador").textContent = fotos.length ? "(" + fotos.length + ")" : "";
+}
+function refrescarMiniatura(f) {
+  const c = document.querySelector('#lista canvas[data-id="' + f.id + '"]');
+  if (c) renderFoto(f, c.getContext("2d"));
+  f.enviada = false;
+}
+function boton(txt, titulo, fn, deshabilitado) {
+  const b = document.createElement("button");
+  b.className = "small"; b.textContent = txt; b.title = titulo; b.disabled = !!deshabilitado;
+  b.addEventListener("click", fn);
+  return b;
+}
+function mover(i, d) {
+  const j = i + d; if (j < 0 || j >= fotos.length) return;
+  [fotos[i], fotos[j]] = [fotos[j], fotos[i]];
+  refrescarLista();
+}
+function quitar(i) {
+  const [f] = fotos.splice(i, 1);
+  if (f.id === selId) selId = fotos[0] ? fotos[0].id : null;
+  refrescarLista(); dibujarEditor();
+}
+$("borrarTodo").addEventListener("click", () => {
+  if (!fotos.length || !confirm("¿Quitar todas las fotos de esta lista? (No borra nada del marco)")) return;
+  fotos.length = 0; selId = null; refrescarLista(); dibujarEditor();
+});
+
+// ---------- Pestañas ----------
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("activa", x === b));
+  document.querySelectorAll(".panel").forEach(p => p.classList.toggle("activo", p.id === "panel-" + b.dataset.tab));
+}));
+
+// ---------- ZIP (JSZip desde CDN) ----------
+let jszipCarga = null;
+function cargarJSZip() {
+  if (window.JSZip) return Promise.resolve(window.JSZip);
+  if (!jszipCarga) jszipCarga = new Promise((ok, mal) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+    s.onload = () => ok(window.JSZip);
+    s.onerror = () => { jszipCarga = null; mal(new Error("Sin internet para cargar JSZip")); };
+    document.head.append(s);
+  });
+  return jszipCarga;
+}
+// JSZip guarda la hora en UTC, pero el formato zip espera hora local:
+// sin este ajuste, en Chile los archivos aparecen con 3 horas de adelanto.
+function corregirFechas(zip) {
+  const d = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+  zip.forEach((ruta, archivo) => { archivo.date = d; });
+}
+function descargar(blob, nombre) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = nombre;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+function estado(id, txt, tipo) {
+  const el = $(id); el.textContent = txt; el.className = "estado" + (tipo ? " " + tipo : "");
+}
+
+// ---------- Salida: microSD ----------
+$("descargarSD").addEventListener("click", async () => {
+  const soloFotosSD = fotos.filter(f => f.tipo !== "anim");
+  const omitidasSD = fotos.length - soloFotosSD.length;
+  if (!soloFotosSD.length) return estado("estadoSD", "Agrega al menos una foto (las animaciones solo se envían por WiFi).", "err");
+  try {
+    estado("estadoSD", "Preparando...");
+    const JSZip = await cargarJSZip();
+    const zip = new JSZip();
+    const carpeta = zip.folder("fotos");
+    soloFotosSD.forEach((f, i) => {
+      carpeta.file(String(i + 1).padStart(3, "0") + ".bin", rgb565(f).buffer);
+    });
+    zip.file("config.txt", textoConfig());
+    corregirFechas(zip);
+    const blob = await zip.generateAsync({ type: "blob" });
+    descargar(blob, "marco_microsd.zip");
+    estado("estadoSD", "Listo: " + soloFotosSD.length + " fotos en marco_microsd.zip" + (omitidasSD ? " (se omitieron " + omitidasSD + " animaciones: solo van por WiFi)" : ""), "ok");
+  } catch (e) { estado("estadoSD", "Error: " + e.message, "err"); }
+});
+function textoConfig() {
+  const a = ajustes();
+  return "# Configuracion del marco de fotos\n" +
+    "pantalla=" + a.pantalla + "   # 1 = cuadrada ST7789, 2 = redonda GC9A01\n" +
+    "segundos=" + a.segundos + "\n" +
+    "brillo=" + a.brillo + "   # 0 a 255\n" +
+    "transicion=" + a.transicion + "   # 1 = fundido, 0 = directo\n";
+}
+
+// ---------- Salida: sketch por cable ----------
+$("descargarCable").addEventListener("click", async () => {
+  const soloFotos = fotos.filter(f => f.tipo !== "anim");
+  const omitidas = fotos.length - soloFotos.length;
+  if (!soloFotos.length) return estado("estadoCable", "Agrega al menos una foto (las animaciones solo se envían por WiFi).", "err");
+  if (soloFotos.length > 22) return estado("estadoCable", "Máximo 22 fotos por cable (tienes " + soloFotos.length + "). Usa la microSD para más.", "err");
+  try {
+    estado("estadoCable", "Generando el código...");
+    const JSZip = await cargarJSZip();
+    const zip = new JSZip();
+    const dir = zip.folder("marco_cable");
+    const nombres = [];
+    soloFotos.forEach((f, i) => {
+      const n = "foto" + (i + 1);
+      nombres.push(n);
+      dir.file(n + ".h", arregloC(n, rgb565(f), f.nombre));
+    });
+    dir.file("marco_cable.ino", sketchCable(nombres, ajustes()));
+    corregirFechas(zip);
+    const blob = await zip.generateAsync({ type: "blob" });
+    descargar(blob, "marco_cable.zip");
+    estado("estadoCable", "Listo: marco_cable.zip con " + soloFotos.length + " fotos." + (omitidas ? " Se omitieron " + omitidas + " animaciones (solo van por WiFi)." : ""), "ok");
+  } catch (e) { estado("estadoCable", "Error: " + e.message, "err"); }
+});
+function arregloC(nombre, datos, original) {
+  const partes = [];
+  for (let i = 0; i < datos.length; i += 16) {
+    const fila = [];
+    for (let k = i; k < Math.min(i + 16, datos.length); k++) fila.push("0x" + datos[k].toString(16).toUpperCase().padStart(4, "0"));
+    partes.push("  " + fila.join(", ") + ",");
+  }
+  return "// " + original.replace(/[\r\n]/g, " ") + " - 240x240 RGB565\n#pragma once\n#include <Arduino.h>\n\n" +
+    "const uint16_t " + nombre + "[240 * 240] PROGMEM = {\n" + partes.join("\n") + "\n};\n";
+}
+function sketchCable(nombres, a) {
+  return `// Marco de fotos - generado por la pagina "Marco de fotos ESP32"
+#include <Arduino_GFX_Library.h>
+${nombres.map(n => '#include "' + n + '.h"').join("\n")}
+
+// 1 = cuadrada ST7789 1.54", 2 = redonda GC9A01 1.28"
+#define PANTALLA ${a.pantalla}
+
+// Conexion: SCL=18, SDA=23, RES=4, DC=16, CS=5, BLK=22 (cuadrada), VCC=3.3V, GND=GND
+Arduino_DataBus *bus = new Arduino_ESP32SPI(16, 5, 18, 23, GFX_NOT_DEFINED);
+#if PANTALLA == 2
+Arduino_GFX *gfx = new Arduino_GC9A01(bus, 4, 0, true);
+#else
+Arduino_GFX *gfx = new Arduino_ST7789(bus, 4, 0, true, 240, 240, 0, 0, 0, 80);
+#endif
+
+const int PIN_BLK = 22;
+const uint16_t *fotos[] = { ${nombres.join(", ")} };
+const int totalFotos = ${nombres.length};
+const int segundosPorFoto = ${a.segundos};
+const int brillo = ${a.brillo};        // 0 a 255
+const bool conFundido = ${a.transicion ? "true" : "false"};
+
+const int pasosFundido = 32;
+const int filasPorBloque = 24;
+uint16_t bloque[240 * 24];
+
+void ponerBrillo(int v) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWrite(PIN_BLK, v);
+#else
+  ledcWrite(0, v);
+#endif
+}
+
+uint16_t mezclar(uint16_t a, uint16_t b, uint8_t t) {
+  uint16_t r = (((a >> 11) & 0x1F) * (32 - t) + ((b >> 11) & 0x1F) * t) >> 5;
+  uint16_t g = (((a >> 5) & 0x3F) * (32 - t) + ((b >> 5) & 0x3F) * t) >> 5;
+  uint16_t bl = ((a & 0x1F) * (32 - t) + (b & 0x1F) * t) >> 5;
+  return (r << 11) | (g << 5) | bl;
+}
+
+void fundido(const uint16_t *desde, const uint16_t *hacia) {
+  for (int paso = 1; paso <= pasosFundido; paso++) {
+    uint8_t t = paso * 32 / pasosFundido;
+    for (int y = 0; y < 240; y += filasPorBloque) {
+      int inicio = y * 240;
+      for (int k = 0; k < 240 * filasPorBloque; k++) {
+        bloque[k] = mezclar(desde[inicio + k], hacia[inicio + k], t);
+      }
+      gfx->draw16bitRGBBitmap(0, y, bloque, 240, filasPorBloque);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcAttach(PIN_BLK, 5000, 8);
+#else
+  ledcSetup(0, 5000, 8);
+  ledcAttachPin(PIN_BLK, 0);
+#endif
+  ponerBrillo(brillo);
+  if (!gfx->begin()) Serial.println("Error iniciando la pantalla");
+  gfx->fillScreen(0x0000);
+  gfx->draw16bitRGBBitmap(0, 0, fotos[0], 240, 240);
+}
+
+void loop() {
+  if (totalFotos < 2) { delay(1000); return; }
+  for (int i = 0; i < totalFotos; i++) {
+    delay(segundosPorFoto * 1000);
+    int siguiente = (i + 1) % totalFotos;
+    if (conFundido) fundido(fotos[i], fotos[siguiente]);
+    else gfx->draw16bitRGBBitmap(0, 0, fotos[siguiente], 240, 240);
+  }
+}
+`;
+}
+
+// ---------- Salida: WiFi (solo cuando la pagina la sirve el marco) ----------
+async function api(ruta, opciones) {
+  const r = await fetch(ruta, opciones);
+  if (!r.ok) throw new Error((await r.text()) || ("HTTP " + r.status));
+  const tipo = r.headers.get("content-type") || "";
+  return tipo.includes("json") ? r.json() : r.text();
+}
+async function detectarMarco() {
+  if (location.protocol === "https:" || location.protocol === "file:") return;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 2500);
+    const info = await fetch("/api/info", { signal: ctl.signal }).then(r => r.ok ? r.json() : null);
+    clearTimeout(t);
+    if (info && info.marco) {
+      enMarco = true;
+      $("wifiFuera").hidden = true;
+      $("wifiDentro").hidden = false;
+      $("modoTexto").textContent = "Conectado al marco (" + location.host + ").";
+      $("pantalla").value = String(info.pantalla);
+      $("segundos").value = info.segundos; $("segundosVal").textContent = info.segundos;
+      const pct = Math.round(info.brillo * 100 / 255);
+      $("brillo").value = pct; $("brilloVal").textContent = pct;
+      $("transicion").value = String(info.transicion);
+      if (info.reloj !== undefined) {
+        const r = $("reloj");
+        if (![...r.options].some(o => o.value === String(info.reloj))) r.append(new Option(info.reloj + " segundos", info.reloj));
+        r.value = String(info.reloj);
+      }
+      $("ssid").value = info.ssid || "";
+      aplicarForma();
+      if (info.modoAP) {
+        $("configWifi").open = true;
+        estado("estadoWifi", "El marco aún no tiene WiFi: abajo escribe el nombre y la clave de la red de tu casa.");
+      }
+      await cargarMarco(info);
+    }
+  } catch (e) { /* no es el marco */ }
+}
+async function cargarMarco(info) {
+  info = info || await api("/api/info");
+  infoMarco = info;
+  fotosMarco = info.fotos.slice();
+  const libres = Math.floor((info.total - info.usado) / 115300);
+  $("infoMarco").textContent = info.fotos.length + " fotos en el marco · espacio para " + Math.max(0, libres) + " más · " +
+    (info.modoAP ? "Red propia MarcoFotos" : "WiFi: " + info.ssid) + " · IP " + info.ip;
+  $("barraEspacio").style.width = Math.min(100, Math.round(info.usado * 100 / info.total)) + "%";
+  await pintarListaMarco();
+}
+async function pintarListaMarco() {
+  const ul = $("listaMarco");
+  ul.innerHTML = "";
+  $("vacioMarco").hidden = fotosMarco.length > 0;
+  for (let i = 0; i < fotosMarco.length; i++) {
+    const id = fotosMarco[i];
+    const li = document.createElement("li");
+    const c = document.createElement("canvas");
+    c.width = LADO; c.height = LADO;
+    const fila = document.createElement("div");
+    fila.className = "row";
+    fila.append(
+      boton("▲", "Subir", () => moverMarco(i, -1), i === 0),
+      boton("▼", "Bajar", () => moverMarco(i, 1), i === fotosMarco.length - 1),
+      boton("🗑", "Borrar del marco", () => borrarMarco(id)),
+    );
+    const nom = document.createElement("div");
+    nom.className = "nombre"; nom.textContent = (i + 1) + ". " + (String(id).startsWith("a") ? "▶ animación " + id.slice(1) : "foto " + id);
+    li.append(c, nom, fila);
+    ul.append(li);
+    cargarMiniaturaMarco(id, c);
+  }
+}
+async function cargarMiniaturaMarco(id, c) {
+  try {
+    const r = await fetch("/api/foto?id=" + encodeURIComponent(id));
+    if (String(id).startsWith("a")) {
+      // animacion: se muestra su primer cuadro (un JPG)
+      const buf = await r.arrayBuffer();
+      const dv = new DataView(buf);
+      const n = dv.getUint16(4, true), cab = 8 + 4 * (n + 1);
+      const jpg = new Blob([buf.slice(cab + dv.getUint32(8, true), cab + dv.getUint32(12, true))], { type: "image/jpeg" });
+      const img = await cargarImagen(jpg);
+      c.getContext("2d").drawImage(img, 0, 0, LADO, LADO);
+      return;
+    }
+    const buf = new Uint16Array(await r.arrayBuffer());
+    const ctx = c.getContext("2d");
+    const img = ctx.createImageData(LADO, LADO);
+    for (let i = 0, j = 0; i < buf.length; i++, j += 4) {
+      const v = buf[i];
+      img.data[j] = ((v >> 11) & 0x1F) * 255 / 31;
+      img.data[j + 1] = ((v >> 5) & 0x3F) * 255 / 63;
+      img.data[j + 2] = (v & 0x1F) * 255 / 31;
+      img.data[j + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  } catch (e) { /* miniatura no disponible */ }
+}
+function moverMarco(i, d) {
+  const j = i + d; if (j < 0 || j >= fotosMarco.length) return;
+  [fotosMarco[i], fotosMarco[j]] = [fotosMarco[j], fotosMarco[i]];
+  $("guardarOrden").disabled = false;
+  pintarListaMarco();
+}
+async function borrarMarco(id) {
+  if (!confirm("¿Borrar esta foto del marco?")) return;
+  try {
+    await api("/api/borrar?id=" + encodeURIComponent(id), { method: "POST" });
+    estado("estadoWifi", "Foto borrada.", "ok");
+    await cargarMarco();
+  } catch (e) { estado("estadoWifi", "Error: " + e.message, "err"); }
+}
+$("guardarOrden").addEventListener("click", async () => {
+  try {
+    await api("/api/orden", { method: "POST", headers: { "Content-Type": "text/plain" }, body: fotosMarco.join(",") });
+    $("guardarOrden").disabled = true;
+    estado("estadoWifi", "Orden guardado.", "ok");
+  } catch (e) { estado("estadoWifi", "Error: " + e.message, "err"); }
+});
+$("enviarWifi").addEventListener("click", async () => {
+  const pendientes = fotos.filter(f => !f.enviada);
+  if (!pendientes.length) return estado("estadoWifi", fotos.length ? "Todas las fotos ya fueron enviadas." : "Agrega fotos primero.", "err");
+  const btn = $("enviarWifi"); btn.disabled = true;
+  $("barraEnvioBox").hidden = false;
+  try {
+    for (let i = 0; i < pendientes.length; i++) {
+      const f = pendientes[i];
+      estado("estadoWifi", "Enviando " + (i + 1) + " de " + pendientes.length + "...");
+      const datos = new FormData();
+      if (f.tipo === "anim") {
+        const anm = await anmDe(f, (msg) => estado("estadoWifi", "(" + (i + 1) + "/" + pendientes.length + ") " + msg));
+        estado("estadoWifi", "Enviando animación " + (i + 1) + " de " + pendientes.length + " (" + Math.round(anm.length / 1024) + " KB)...");
+        datos.append("foto", new Blob([anm], { type: "application/octet-stream" }), "anim.anm");
+      } else {
+        datos.append("foto", new Blob([rgb565(f).buffer], { type: "application/octet-stream" }), "foto.bin");
+      }
+      await api("/api/fotos", { method: "POST", body: datos });
+      f.enviada = true;
+      $("barraEnvio").style.width = Math.round((i + 1) * 100 / pendientes.length) + "%";
+    }
+    estado("estadoWifi", "Listo: " + pendientes.length + " fotos enviadas al marco.", "ok");
+    refrescarLista();
+    await cargarMarco();
+  } catch (e) {
+    estado("estadoWifi", "Error al enviar: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => { $("barraEnvioBox").hidden = true; $("barraEnvio").style.width = "0"; }, 1500);
+  }
+});
+$("guardarAjustes").addEventListener("click", async () => {
+  const a = ajustes();
+  const cambiaPantalla = infoMarco && a.pantalla !== infoMarco.pantalla;
+  try {
+    await api("/api/config", { method: "POST", body: new URLSearchParams(a) });
+    estado("estadoWifi", cambiaPantalla ? "Ajustes guardados. El marco se reinicia para cambiar de pantalla..." : "Ajustes guardados.", "ok");
+    if (cambiaPantalla) setTimeout(() => location.reload(), 6000);
+    else infoMarco = Object.assign(infoMarco || {}, a);
+  } catch (e) { estado("estadoWifi", "Error: " + e.message, "err"); }
+});
+$("guardarWifi").addEventListener("click", async () => {
+  const ssid = $("ssid").value.trim();
+  if (!ssid) return estado("estadoWifi", "Escribe el nombre de la red.", "err");
+  try {
+    await api("/api/wifi", { method: "POST", body: new URLSearchParams({ ssid, clave: $("clave").value }) });
+    estado("estadoWifi", "Guardado. El marco se reinicia y se conecta a «" + ssid + "». Vuelve a conectar este equipo a esa red y abre http://marco.local (o la IP que muestre la pantalla).", "ok");
+  } catch (e) { estado("estadoWifi", "Error: " + e.message, "err"); }
+});
+
+// ---------- Inicio ----------
+aplicarForma();
+refrescarLista();
+dibujarEditor();
+detectarMarco();
+</script>
+</body>
+</html>
+)MARCO";
