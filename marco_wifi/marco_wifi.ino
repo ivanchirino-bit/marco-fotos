@@ -60,6 +60,11 @@ int ultimoMinutoReloj = -1;
 
 bool modoAP = false;
 String ssidGuardado;
+// Telegram
+String tgToken, tgIds, tgBot;
+long tgOffset = 0;
+unsigned long tgProximo = 0;
+const unsigned long TG_CADA_MS = 15000;
 std::vector<String> redesEncontradas;   // redes WiFi detectadas al iniciar
 std::vector<String> orden;   // ids de las fotos, en orden
 int indiceActual = -1;
@@ -596,10 +601,6 @@ void inicio() {
 // El marco consulta el bot cada 15 segundos (no hace falta abrir puertos
 // en el router). El token y los IDs autorizados se guardan solo en el marco.
 // ---------------------------------------------------------------------
-String tgToken, tgIds, tgBot;
-long tgOffset = 0;
-unsigned long tgProximo = 0;
-const unsigned long TG_CADA_MS = 15000;
 WiFiClientSecure tgCliente;
 
 String urlCodificar(const String &t) {
