@@ -10,7 +10,7 @@
 //
 //  Arduino IDE: placa "ESP32 Dev Module",
 //  Partition Scheme "No OTA (2MB APP/2MB SPIFFS)".
-//  Librerias: GFX Library for Arduino, JPEGDEC.
+//  Librerias: GFX Library for Arduino, JPEGDEC, ArduinoJson.
 //
 //  Conexion pantalla: SCL=18, SDA=23, RES=4, DC=16, CS=5,
 //  BLK=22 (cuadrada), VCC=3.3V, GND=GND
@@ -26,6 +26,9 @@
 #include <Arduino_GFX_Library.h>
 #include <JPEGDEC.h>        // libreria JPEGDEC (Larry Bank), para las animaciones
 #include <time.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>   // libreria ArduinoJson (Benoit Blanchon), para Telegram
 #include "FreeSansBold24pt7b.h"
 #include "FreeSansBold12pt7b.h"
 #include "pagina.h"
@@ -301,6 +304,9 @@ void cargarAjustes() {
   cfgTransicion = prefs.getInt("transicion", 1);
   cfgReloj = prefs.getInt("reloj", 20);
   ssidGuardado = prefs.getString("ssid", "");
+  tgToken = prefs.getString("tgToken", "");
+  tgBot = prefs.getString("tgBot", "");
+  tgIds = prefs.getString("tgIds", "");
 }
 
 void guardarOrden() {
@@ -356,6 +362,7 @@ void apiInfo() {
   j += ",\"modoAP\":" + String(modoAP ? "true" : "false");
   j += ",\"ssid\":" + jsonTexto(ssidGuardado);
   j += ",\"ip\":" + jsonTexto(modoAP ? WiFi.softAPIP().toString() : WiFi.localIP().toString());
+  j += ",\"telegram\":{\"activo\":" + String(tgToken.length() ? "true" : "false") + ",\"bot\":" + jsonTexto(tgBot) + ",\"ids\":" + jsonTexto(tgIds) + "}";
   j += ",\"fotos\":[";
   for (size_t i = 0; i < orden.size(); i++) {
     if (i) j += ",";
@@ -584,6 +591,229 @@ void inicio() {
   else enviarPagina();
 }
 
+// ---------------------------------------------------------------------
+// Telegram: recibir fotos desde cualquier lugar
+// El marco consulta el bot cada 15 segundos (no hace falta abrir puertos
+// en el router). El token y los IDs autorizados se guardan solo en el marco.
+// ---------------------------------------------------------------------
+String tgToken, tgIds, tgBot;
+long tgOffset = 0;
+unsigned long tgProximo = 0;
+const unsigned long TG_CADA_MS = 15000;
+WiFiClientSecure tgCliente;
+
+String urlCodificar(const String &t) {
+  String r;
+  const char *hex = "0123456789ABCDEF";
+  for (size_t i = 0; i < t.length(); i++) {
+    uint8_t c = t[i];
+    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') r += (char)c;
+    else { r += '%'; r += hex[c >> 4]; r += hex[c & 15]; }
+  }
+  return r;
+}
+
+// Llama a la API de Telegram y deja la respuesta (filtrada) en doc
+bool tgLlamar(const String &metodo, const String &params, JsonDocument &doc, JsonDocument *filtro, const String &token) {
+  HTTPClient http;
+  tgCliente.setInsecure();   // sin validar certificado (ver README)
+  String url = "https://api.telegram.org/bot" + token + "/" + metodo;
+  if (params.length()) url += "?" + params;
+  if (!http.begin(tgCliente, url)) return false;
+  http.setTimeout(10000);
+  int codigo = http.GET();
+  if (codigo != 200) { http.end(); return false; }
+  String cuerpo = http.getString();
+  http.end();
+  DeserializationError e = filtro ? deserializeJson(doc, cuerpo, DeserializationOption::Filter(*filtro))
+                                  : deserializeJson(doc, cuerpo);
+  return !e && doc["ok"].as<bool>();
+}
+
+void tgEnviar(const String &chat, const String &texto) {
+  JsonDocument doc, filtro;
+  filtro["ok"] = true;
+  tgLlamar("sendMessage", "chat_id=" + chat + "&text=" + urlCodificar(texto), doc, &filtro, tgToken);
+}
+
+bool tgAutorizado(const String &chat) {
+  String lista = "," + tgIds + ",";
+  lista.replace(" ", "");
+  return tgIds.length() && lista.indexOf("," + chat + ",") >= 0;
+}
+
+// --- Decodificar el JPG recibido y guardarlo recortado a 240x240 ---
+File tgArchivo;
+int tgRecorteX = 0, tgRecorteY = 0;
+
+int tgGuardarBloque(JPEGDRAW *p) {
+  for (int fila = 0; fila < p->iHeight; fila++) {
+    int dy = p->y + fila - tgRecorteY;
+    if (dy < 0 || dy >= 240) continue;
+    int x0 = p->x - tgRecorteX, desde = 0, ancho = p->iWidth;
+    if (x0 < 0) { desde = -x0; ancho -= desde; x0 = 0; }
+    if (x0 + ancho > 240) ancho = 240 - x0;
+    if (ancho <= 0) continue;
+    tgArchivo.seek((dy * 240 + x0) * 2);
+    tgArchivo.write((uint8_t *)(p->pPixels + fila * p->iWidth + desde), ancho * 2);
+  }
+  return 1;
+}
+
+// Descarga la foto de Telegram, la recorta al centro y la agrega al marco
+String tgAgregarFoto(const String &fileId, int escala) {
+  size_t libre = LittleFS.totalBytes() - LittleFS.usedBytes();
+  if (libre < BYTES_FOTO + 16384) return "La memoria del marco esta llena. Borra algunas fotos desde la pagina del marco.";
+
+  JsonDocument doc, filtro;
+  filtro["ok"] = true;
+  filtro["result"]["file_path"] = true;
+  if (!tgLlamar("getFile", "file_id=" + urlCodificar(fileId), doc, &filtro, tgToken)) return "No pude obtener la foto de Telegram.";
+  String ruta = doc["result"]["file_path"].as<String>();
+
+  HTTPClient http;
+  tgCliente.setInsecure();
+  if (!http.begin(tgCliente, "https://api.telegram.org/file/bot" + tgToken + "/" + ruta)) return "No pude descargar la foto.";
+  http.setTimeout(15000);
+  if (http.GET() != 200) { http.end(); return "No pude descargar la foto."; }
+  int largo = http.getSize();
+  if (largo <= 0 || largo > 220000) { http.end(); return "La foto es demasiado grande."; }
+  uint8_t *jpg = (uint8_t *)malloc(largo);
+  if (!jpg) { http.end(); return "Sin memoria para la foto."; }
+  WiFiClient *flujo = http.getStreamPtr();
+  int leidos = 0;
+  unsigned long limite = millis() + 15000;
+  while (leidos < largo && millis() < limite) {
+    int n = flujo->read(jpg + leidos, largo - leidos);
+    if (n > 0) leidos += n; else delay(5);
+  }
+  http.end();
+  if (leidos != largo) { free(jpg); return "La descarga se corto."; }
+
+  if (!jpeg.openRAM(jpg, largo, tgGuardarBloque)) { free(jpg); return "No pude leer la foto (formato JPG)."; }
+  int w = jpeg.getWidth() / escala, h = jpeg.getHeight() / escala;
+  tgRecorteX = (w - 240) / 2;
+  tgRecorteY = (h - 240) / 2;
+
+  int sig = prefs.getInt("sig", 1);
+  prefs.putInt("sig", sig + 1);
+  String id = String(sig);
+  // archivo de 240x240 en negro, que luego se llena con la foto
+  File f = LittleFS.open(rutaDe(id), "w");
+  memset(bloque, 0, sizeof(bloque));
+  for (int i = 0; i < 12; i++) f.write((uint8_t *)bloque, sizeof(bloque));
+  f.close();
+  tgArchivo = LittleFS.open(rutaDe(id), "r+");
+  jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
+  int opciones = escala == 2 ? JPEG_SCALE_HALF : escala == 4 ? JPEG_SCALE_QUARTER : escala == 8 ? JPEG_SCALE_EIGHTH : 0;
+  int ok = jpeg.decode(0, 0, opciones);
+  jpeg.close();
+  tgArchivo.close();
+  free(jpg);
+  if (!ok) { LittleFS.remove(rutaDe(id)); return "No pude decodificar la foto."; }
+
+  orden.push_back(id);
+  guardarOrden();
+  // mostrarla de inmediato
+  detenerAnim();
+  enReloj = false;
+  indiceActual = (int)orden.size() - 2;
+  proximoCambio = 0;
+  Serial.println("[marco] Foto de Telegram agregada: " + id);
+  int quedan = (LittleFS.totalBytes() - LittleFS.usedBytes()) / (BYTES_FOTO + 512);
+  return "Foto agregada al marco (" + String((int)orden.size()) + " en total, espacio para " + String(quedan) + " mas).";
+}
+
+void revisarTelegram() {
+  if (modoAP || !tgToken.length() || millis() < tgProximo || WiFi.status() != WL_CONNECTED) return;
+  // Durante una animacion se revisa menos seguido, para no cortarla
+  if (animActiva && millis() < tgProximo + 45000) return;
+  tgProximo = millis() + TG_CADA_MS;
+
+  JsonDocument filtro;
+  filtro["ok"] = true;
+  filtro["result"][0]["update_id"] = true;
+  JsonObject m = filtro["result"][0]["message"].to<JsonObject>();
+  m["chat"]["id"] = true;
+  m["from"]["first_name"] = true;
+  m["text"] = true;
+  m["photo"][0]["file_id"] = true;
+  m["photo"][0]["width"] = true;
+  m["photo"][0]["height"] = true;
+  m["document"]["mime_type"] = true;
+  JsonDocument doc;
+  if (!tgLlamar("getUpdates", "offset=" + String(tgOffset) + "&limit=3&timeout=0&allowed_updates=%5B%22message%22%5D", doc, &filtro, tgToken)) return;
+
+  for (JsonObject u : doc["result"].as<JsonArray>()) {
+    tgOffset = u["update_id"].as<long>() + 1;
+    JsonObject msg = u["message"];
+    if (msg.isNull()) continue;
+    char chatBuf[24];
+    snprintf(chatBuf, sizeof(chatBuf), "%lld", msg["chat"]["id"].as<long long>());
+    String chat = chatBuf;
+    String nombre = msg["from"]["first_name"] | "";
+
+    if (!tgAutorizado(chat)) {
+      tgEnviar(chat, "Hola " + nombre + "! Tu ID de Telegram es " + chat +
+                     ". Para enviar fotos al marco, agrega este numero en la pagina del marco (Recibir fotos por Telegram).");
+      continue;
+    }
+    JsonArray fotos = msg["photo"].as<JsonArray>();
+    if (!fotos.isNull() && fotos.size()) {
+      // Elige el tamano y la escala que dejen el lado menor lo mas cerca posible de 240 px
+      String mejorId;
+      int mejorEscala = 1, mejorLado = 100000;
+      for (JsonObject f : fotos) {
+        int w = f["width"], h = f["height"];
+        int lado = min(w, h);
+        for (int esc = 1; esc <= 8; esc *= 2) {
+          int l = lado / esc;
+          if (l >= 216 && l < mejorLado && (long)w * h <= 1600L * 1600L) { mejorLado = l; mejorId = f["file_id"].as<String>(); mejorEscala = esc; }
+        }
+      }
+      if (!mejorId.length()) { JsonObject f = fotos[fotos.size() - 1]; mejorId = f["file_id"].as<String>(); mejorEscala = 1; }
+      tgEnviar(chat, "Recibida, la estoy poniendo en el marco...");
+      tgEnviar(chat, tgAgregarFoto(mejorId, mejorEscala));
+    } else if (!msg["document"].isNull()) {
+      tgEnviar(chat, "Envia la imagen como foto (no como archivo) para que el marco la pueda leer.");
+    } else {
+      String texto = msg["text"] | "";
+      if (texto == "/estado") {
+        int quedan = (LittleFS.totalBytes() - LittleFS.usedBytes()) / (BYTES_FOTO + 512);
+        tgEnviar(chat, "El marco tiene " + String((int)orden.size()) + " fotos y espacio para " + String(quedan) + " mas.");
+      } else {
+        tgEnviar(chat, "Hola " + nombre + "! Enviame una foto y aparecera en el marco en unos segundos. Comando: /estado");
+      }
+    }
+  }
+}
+
+void apiTelegram() {
+  String token = server.arg("token");
+  token.trim();
+  String ids = server.arg("ids");
+  ids.replace(" ", "");
+  if (token.length()) {
+    JsonDocument doc, filtro;
+    filtro["ok"] = true;
+    filtro["result"]["username"] = true;
+    if (!tgLlamar("getMe", "", doc, &filtro, token)) { server.send(400, "text/plain", "El token no es valido o el marco no tiene internet"); return; }
+    tgToken = token;
+    tgBot = doc["result"]["username"].as<String>();
+    prefs.putString("tgToken", tgToken);
+    prefs.putString("tgBot", tgBot);
+    tgOffset = 0;
+  }
+  if (server.hasArg("quitar")) {
+    tgToken = ""; tgBot = "";
+    prefs.remove("tgToken"); prefs.remove("tgBot");
+  }
+  tgIds = ids;
+  prefs.putString("tgIds", tgIds);
+  tgProximo = 0;
+  server.send(200, "application/json", "{\"ok\":true,\"bot\":" + jsonTexto(tgBot) + "}");
+}
+
 void noEncontrado() {
   if (modoAP) {   // portal cautivo: cualquier direccion lleva a la pagina
     server.sendHeader("Location", "http://192.168.4.1/", true);
@@ -678,6 +908,7 @@ void setup() {
   server.on("/api/orden", HTTP_POST, apiOrden);
   server.on("/api/config", HTTP_POST, apiConfig);
   server.on("/api/wifi", HTTP_POST, apiWifi);
+  server.on("/api/telegram", HTTP_POST, apiTelegram);
   server.onNotFound(noEncontrado);
   server.begin();
   Serial.println("[marco] Servidor web listo");
@@ -699,6 +930,7 @@ void loop() {
 
   avanzarAnim();
   actualizarReloj();
+  revisarTelegram();
 
   if (millis() >= proximoCambio) {
     mostrarSiguiente();

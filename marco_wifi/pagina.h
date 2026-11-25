@@ -178,6 +178,25 @@ const char PAGINA[] PROGMEM = R"MARCO(<!DOCTYPE html>
           <p class="muted">Si el marco no logra conectarse, crea su propia red <b>MarcoFotos</b> (clave <code>marco1234</code>)
              y su página queda en <code>http://192.168.4.1</code>.</p>
         </details>
+
+        <details style="margin-top:12px" id="configTelegram">
+          <summary>Recibir fotos por Telegram (desde cualquier lugar) <span id="tgResumen" class="muted"></span></summary>
+          <ol class="muted">
+            <li>En Telegram, abre <b>@BotFather</b>, envía <code>/newbot</code> y elige un nombre. Te dará un <b>token</b>.</li>
+            <li>Pega el token aquí abajo y presiona <b>Guardar</b>.</li>
+            <li>Envíale una foto a tu bot: te responderá con tu <b>ID</b>. Agrégalo en "IDs autorizados" y guarda de nuevo.</li>
+            <li>Listo: cada foto que le envíes aparecerá en el marco en unos segundos.</li>
+          </ol>
+          <label for="tgToken">Token del bot</label>
+          <input type="password" id="tgToken" autocomplete="off" placeholder="123456789:ABC...">
+          <label for="tgIds">IDs autorizados (separados por coma)</label>
+          <input type="text" id="tgIds" autocomplete="off" placeholder="123456789, 987654321">
+          <div class="row" style="margin-top:10px">
+            <button id="guardarTelegram">Guardar</button>
+            <button id="quitarTelegram" class="small">Desconectar bot</button>
+          </div>
+          <div class="estado" id="estadoTelegram"></div>
+        </details>
       </div>
     </div>
 
@@ -849,6 +868,7 @@ async function detectarMarco() {
         r.value = String(info.reloj);
       }
       $("ssid").value = info.ssid || "";
+      mostrarTelegram(info.telegram);
       aplicarForma();
       if (info.modoAP) {
         $("configWifi").open = true;
@@ -986,6 +1006,33 @@ $("guardarWifi").addEventListener("click", async () => {
     await api("/api/wifi", { method: "POST", body: new URLSearchParams({ ssid, clave: $("clave").value }) });
     estado("estadoWifi", "Guardado. El marco se reinicia y se conecta a «" + ssid + "». Vuelve a conectar este equipo a esa red y abre http://marco.local (o la IP que muestre la pantalla).", "ok");
   } catch (e) { estado("estadoWifi", "Error: " + e.message, "err"); }
+});
+
+// ---------- Telegram ----------
+function mostrarTelegram(t) {
+  if (!t) return;
+  $("tgIds").value = t.ids || "";
+  $("tgToken").placeholder = t.activo ? "(guardado; escribe uno nuevo solo para cambiarlo)" : "123456789:ABC...";
+  $("tgResumen").textContent = t.activo ? "· conectado a @" + t.bot : "· sin configurar";
+}
+$("guardarTelegram").addEventListener("click", async () => {
+  const datos = new URLSearchParams({ token: $("tgToken").value.trim(), ids: $("tgIds").value });
+  estado("estadoTelegram", "Guardando y probando el bot...");
+  try {
+    const r = await api("/api/telegram", { method: "POST", body: datos });
+    $("tgToken").value = "";
+    const info = await api("/api/info");
+    mostrarTelegram(info.telegram);
+    estado("estadoTelegram", r.bot ? "Listo: conectado a @" + r.bot + ". Envíale una foto desde Telegram." : "Guardado.", "ok");
+  } catch (e) { estado("estadoTelegram", "Error: " + e.message, "err"); }
+});
+$("quitarTelegram").addEventListener("click", async () => {
+  try {
+    await api("/api/telegram", { method: "POST", body: new URLSearchParams({ quitar: "1", ids: $("tgIds").value }) });
+    const info = await api("/api/info");
+    mostrarTelegram(info.telegram);
+    estado("estadoTelegram", "Bot desconectado.", "ok");
+  } catch (e) { estado("estadoTelegram", "Error: " + e.message, "err"); }
 });
 
 // ---------- Inicio ----------
