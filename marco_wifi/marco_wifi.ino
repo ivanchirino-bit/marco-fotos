@@ -31,6 +31,11 @@
 #include <ArduinoJson.h>   // libreria ArduinoJson (Benoit Blanchon), para Telegram
 #include "FreeSansBold24pt7b.h"
 #include "FreeSansBold12pt7b.h"
+#include "ClimaTemp.h"     // Inter Light 66 px (temperatura del clima)
+#include "ClimaTexto.h"    // Inter Medium 17 px (textos del clima)
+#include "ClimaChico.h"    // Inter Medium 13 px (proximas horas)
+#include "ClimaHora.h"     // Inter Light 70 px (hora)
+#include "Cielos.h"        // fondos de cielo realistas (JPG)
 #include "pagina.h"
 
 const int PIN_BLK = 22;
@@ -74,6 +79,11 @@ float climaTemp = 0, climaMax = 0, climaMin = 0;
 int climaCodigo = 0, climaDia = 1, climaLluvia = 0;
 unsigned long climaHora = 0, climaProximo = 0;
 const unsigned long CLIMA_CADA_MS = 30UL * 60UL * 1000UL;
+struct HoraClima { int hora; float temp; int codigo; int dia; };
+int fondoCodigo = 0, fondoDia = 1;   // cielo que se dibuja de fondo (hora y clima)
+bool sombraTexto = false;            // textos con sombra (sobre el cielo)
+bool cieloTarjeta = false;           // aclarar la zona de la tarjeta de proximas horas
+HoraClima climaHoras[3] = {{-1, 0, 0, 1}, {-1, 0, 0, 1}, {-1, 0, 0, 1}};   // [0] hora actual, [1] y [2] las siguientes
 std::vector<String> redesEncontradas;   // redes WiFi detectadas al iniciar
 std::vector<String> orden;   // ids de las fotos, en orden
 int indiceActual = -1;
@@ -243,13 +253,20 @@ void textoCentrado(const String &t, int y, const GFXfont *fuente, uint16_t color
   int16_t x1, y1;
   uint16_t w, h;
   gfx->getTextBounds(t, 0, y, &x1, &y1, &w, &h);
+  int x = (240 - (int)w) / 2 - x1;
+  if (sombraTexto) {   // sombra de 1 pixel para que se lea sobre nubes claras
+    gfx->setTextColor(0x18C6);
+    gfx->setCursor(x + 1, y + 1);
+    gfx->print(t);
+  }
   gfx->setTextColor(color);
-  gfx->setCursor((240 - (int)w) / 2 - x1, y);
+  gfx->setCursor(x, y);
   gfx->print(t);
 }
 
 void dibujarReloj() {
-  static const char *DIAS[] = {"Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"};
+  // En estas fuentes '|' = e con tilde y '{' = a con tilde
+  static const char *DIAS[] = {"Domingo", "Lunes", "Martes", "Mi|rcoles", "Jueves", "Viernes", "S{bado"};
   static const char *MESES[] = {"enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
                                 "agosto", "septiembre", "octubre", "noviembre", "diciembre"};
   time_t ahora = time(nullptr);
@@ -257,10 +274,18 @@ void dibujarReloj() {
   localtime_r(&ahora, &t);
   char hora[6];
   snprintf(hora, sizeof(hora), "%02d:%02d", t.tm_hour, t.tm_min);
-  gfx->fillScreen(0x0000);
-  textoCentrado(DIAS[t.tm_wday], 82, &FreeSansBold12pt7b, 0xFD20);                     // naranjo
-  textoCentrado(hora, 140, &FreeSansBold24pt7b, 0xFFFF);                               // blanco
-  textoCentrado(String(t.tm_mday) + " de " + MESES[t.tm_mon], 180, &FreeSansBold12pt7b, 0xBDF7);  // gris
+
+  // Mismo cielo que la pantalla del clima; sin clima, de dia entre 7:00 y 20:00
+  if (climaListo()) { fondoCodigo = climaCodigo; fondoDia = climaDia; }
+  else { fondoCodigo = 0; fondoDia = t.tm_hour >= 7 && t.tm_hour < 20; }
+  cieloTarjeta = false;
+  dibujarFondoCielo();
+
+  sombraTexto = true;
+  textoCentrado(DIAS[t.tm_wday], 74, &ClimaTexto, 0xFFFF);
+  textoCentrado(hora, 148, &ClimaHora, 0xFFFF);
+  textoCentrado(String(t.tm_mday) + " de " + MESES[t.tm_mon], 176, &ClimaTexto, rgb565(232, 236, 244));
+  sombraTexto = false;
   gfx->setFont((const GFXfont *)nullptr);   // vuelve a la letra normal para los mensajes
   ultimoMinutoReloj = t.tm_min;
 }
@@ -866,8 +891,8 @@ String climaDescripcion() {
   int c = climaCodigo;
   if (!climaOk) return "";
   if (c == 0) return "Despejado";
-  if (c == 1) return "Poco nublado";
-  if (c == 2) return "Algo nublado";
+  if (c == 1) return "Mayormente despejado";
+  if (c == 2) return "Parcialmente nublado";
   if (c == 3) return "Nublado";
   if (c == 45 || c == 48) return "Neblina";
   if (c >= 51 && c <= 57) return "Llovizna";
@@ -888,9 +913,14 @@ bool actualizarClima() {
   filtro["daily"]["temperature_2m_max"] = true;
   filtro["daily"]["temperature_2m_min"] = true;
   filtro["daily"]["precipitation_probability_max"] = true;
+  filtro["hourly"]["time"] = true;
+  filtro["hourly"]["temperature_2m"] = true;
+  filtro["hourly"]["weather_code"] = true;
+  filtro["hourly"]["is_day"] = true;
   String url = "https://api.open-meteo.com/v1/forecast?latitude=" + climaLat + "&longitude=" + climaLon +
                "&current=temperature_2m,weather_code,is_day"
                "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+               "&hourly=temperature_2m,weather_code,is_day&forecast_hours=3"
                "&timezone=auto&forecast_days=1";
   if (!obtenerJson(url, doc, filtro) || doc["current"].isNull()) return false;
   climaTemp = doc["current"]["temperature_2m"] | 0.0f;
@@ -899,6 +929,17 @@ bool actualizarClima() {
   climaMax = doc["daily"]["temperature_2m_max"][0] | climaTemp;
   climaMin = doc["daily"]["temperature_2m_min"][0] | climaTemp;
   climaLluvia = doc["daily"]["precipitation_probability_max"][0] | 0;
+  // Proximas horas (la lista parte en la hora actual)
+  JsonArray horas = doc["hourly"]["time"].as<JsonArray>();
+  for (int i = 0; i < 3; i++) {
+    climaHoras[i].hora = -1;
+    if (horas.isNull() || i >= (int)horas.size()) continue;
+    String hora = horas[i] | "";                       // "2026-11-25T02:00"
+    climaHoras[i].hora = hora.length() >= 13 ? hora.substring(11, 13).toInt() : -1;
+    climaHoras[i].temp = doc["hourly"]["temperature_2m"][i] | climaTemp;
+    climaHoras[i].codigo = doc["hourly"]["weather_code"][i] | climaCodigo;
+    climaHoras[i].dia = doc["hourly"]["is_day"][i] | climaDia;
+  }
   climaOk = true;
   climaHora = millis();
   Serial.printf("[clima] %s: %.1f C, codigo %d\n", climaCiudad.c_str(), climaTemp, climaCodigo);
@@ -912,65 +953,109 @@ void revisarClima() {
   climaProximo = millis() + (actualizarClima() ? CLIMA_CADA_MS : 5UL * 60UL * 1000UL);
 }
 
-// --- Dibujos del clima (hechos con figuras, sin imagenes) ---
-const uint16_t C_AMARILLO = 0xFE60, C_NUBE = 0xCE79, C_NUBE_OSCURA = 0x9CF3, C_AZUL = 0x4D9F,
-               C_GRIS = 0xBDF7, C_NARANJO = 0xFD20, C_CELESTE = 0x867F;
+// --- Pantalla del clima: fondo degradado segun el tiempo y la hora, letras finas (Inter),
+//     estrellas de noche y una tarjeta con las proximas horas ---
+uint16_t rgb565(int r, int g, int b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
 
-void dibujarSol(int cx, int cy, int r) {
+// Colores de arriba y abajo del degradado
+void climaColoresFondo(uint8_t a[3], uint8_t b[3]) {
+  static const uint8_t FONDOS[6][6] = {
+    { 38, 104, 196, 104, 164, 226},   // 0 dia despejado
+    { 84, 104, 130, 146, 162, 182},   // 1 dia nublado / neblina
+    { 46,  56,  76,  92, 102, 122},   // 2 lluvia / tormenta
+    {112, 132, 160, 184, 196, 214},   // 3 nieve
+    { 10,  16,  44,  38,  50,  92},   // 4 noche despejada
+    { 18,  22,  34,  54,  60,  76},   // 5 noche nublada / lluvia
+  };
+  int c = fondoCodigo, f;
+  bool lluvia = (c >= 51 && c <= 67) || (c >= 80 && c <= 82) || c >= 95;
+  bool nieve = (c >= 71 && c <= 77) || c == 85 || c == 86;
+  bool nubes = c == 2 || c == 3 || c == 45 || c == 48;
+  if (!fondoDia) f = (lluvia || nieve || nubes) ? 5 : 4;
+  else if (lluvia) f = 2;
+  else if (nieve) f = 3;
+  else if (nubes) f = 1;
+  else f = 0;
+  for (int i = 0; i < 3; i++) { a[i] = FONDOS[f][i]; b[i] = FONDOS[f][i + 3]; }
+}
+
+// Color del fondo en la fila y; "claro" (0-255) lo aclara hacia blanco (tarjeta, estrellas)
+uint16_t climaFondoEn(int y, int claro) {
+  uint8_t a[3], b[3];
+  climaColoresFondo(a, b);
+  int c[3];
+  for (int i = 0; i < 3; i++) {
+    c[i] = a[i] + (b[i] - a[i]) * y / 239;
+    c[i] += (255 - c[i]) * claro / 255;
+  }
+  return rgb565(c[0], c[1], c[2]);
+}
+
+const uint16_t C_SOL = 0xFE60, C_NUBE = 0xF7BF, C_NUBE_LLUVIA = 0xC638, C_GOTA = 0x7E1F, C_RAYO = 0xFEA0;
+const int TARJETA_Y0 = 166, TARJETA_Y1 = 236, TARJETA_X0 = 30, TARJETA_X1 = 209, TARJETA_CLARO = 26;
+
+// Dibujos escalables: s = tamano (1.0 normal). "fondo" se usa para recortar la luna.
+void dibujarSol(int cx, int cy, float s) {
+  int r = 12 * s;
   for (int i = 0; i < 8; i++) {
     float ang = i * PI / 4;
-    int x1 = cx + cos(ang) * (r + 5), y1 = cy + sin(ang) * (r + 5);
-    int x2 = cx + cos(ang) * (r + 12), y2 = cy + sin(ang) * (r + 12);
-    gfx->drawLine(x1, y1, x2, y2, C_AMARILLO);
-    gfx->drawLine(x1 + 1, y1, x2 + 1, y2, C_AMARILLO);
+    int x1 = cx + cos(ang) * (r + 4 * s), y1 = cy + sin(ang) * (r + 4 * s);
+    int x2 = cx + cos(ang) * (r + 10 * s), y2 = cy + sin(ang) * (r + 10 * s);
+    gfx->drawLine(x1, y1, x2, y2, C_SOL);
+    if (s > 0.7) gfx->drawLine(x1 + 1, y1, x2 + 1, y2, C_SOL);
   }
-  gfx->fillCircle(cx, cy, r, C_AMARILLO);
+  gfx->fillCircle(cx, cy, r, C_SOL);
 }
 
-void dibujarLuna(int cx, int cy, int r) {
-  gfx->fillCircle(cx, cy, r, 0xFFF0);
-  gfx->fillCircle(cx + r / 2, cy - r / 3, r * 85 / 100, 0x0000);
+void dibujarLuna(int cx, int cy, float s, uint16_t fondo) {
+  // media luna: puntos dentro del circulo y fuera del circulo desplazado (no necesita color de fondo)
+  int r = 13 * s, ox = cx + r / 2, oy = cy - r / 3, r2 = r * 85 / 100;
+  for (int y = cy - r; y <= cy + r; y++)
+    for (int x = cx - r; x <= cx + r; x++)
+      if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r && (x - ox) * (x - ox) + (y - oy) * (y - oy) > r2 * r2)
+        gfx->drawPixel(x, y, 0xFFDC);
 }
 
-void dibujarNube(int cx, int cy, uint16_t color) {
-  gfx->fillCircle(cx - 14, cy + 4, 12, color);
-  gfx->fillCircle(cx + 2, cy - 6, 16, color);
-  gfx->fillCircle(cx + 18, cy + 4, 12, color);
-  gfx->fillRoundRect(cx - 26, cy + 2, 56, 15, 7, color);
+void dibujarNube(int cx, int cy, float s, uint16_t color) {
+  gfx->fillCircle(cx - 11 * s, cy + 3 * s, 9 * s, color);
+  gfx->fillCircle(cx + 2 * s, cy - 5 * s, 12 * s, color);
+  gfx->fillCircle(cx + 14 * s, cy + 3 * s, 9 * s, color);
+  gfx->fillRoundRect(cx - 20 * s, cy + 1 * s, 44 * s, 12 * s, 5 * s, color);
 }
 
-void dibujarIconoClima(int cx, int cy) {
-  int c = climaCodigo;
+void dibujarIconoClima(int cx, int cy, int c, int dia, float s, uint16_t fondo) {
   bool lluvia = (c >= 51 && c <= 67) || (c >= 80 && c <= 82);
   bool nieve = (c >= 71 && c <= 77) || c == 85 || c == 86;
   bool tormenta = c >= 95;
   if (c == 0) {
-    if (climaDia) dibujarSol(cx, cy, 18); else dibujarLuna(cx, cy, 20);
+    if (dia) dibujarSol(cx, cy, s); else dibujarLuna(cx, cy, s, fondo);
     return;
   }
   if (c == 1 || c == 2) {
-    if (climaDia) dibujarSol(cx - 14, cy - 10, 13); else dibujarLuna(cx - 14, cy - 10, 14);
-    dibujarNube(cx + 6, cy + 4, C_NUBE);
+    if (dia) dibujarSol(cx - 8 * s, cy - 6 * s, s * 0.75); else dibujarLuna(cx - 8 * s, cy - 6 * s, s * 0.8, fondo);
+    dibujarNube(cx + 5 * s, cy + 3 * s, s * 0.8, C_NUBE);
     return;
   }
   if (c == 45 || c == 48) {
-    for (int i = 0; i < 4; i++) gfx->fillRoundRect(cx - 30 + (i % 2) * 8, cy - 18 + i * 11, 52, 5, 2, C_GRIS);
+    for (int i = 0; i < 3; i++)
+      gfx->fillRoundRect(cx - 20 * s + (i % 2) * 5 * s, cy - 9 * s + i * 8 * s, 34 * s, max(2, (int)(4 * s)), 2, C_NUBE);
     return;
   }
-  dibujarNube(cx, cy - 8, (lluvia || tormenta) ? C_NUBE_OSCURA : C_NUBE);
+  bool oscura = lluvia || tormenta;
+  dibujarNube(cx, cy - 5 * s, s, oscura ? C_NUBE_LLUVIA : C_NUBE);
   if (lluvia) {
     for (int i = 0; i < 4; i++) {
-      int x = cx - 16 + i * 12;
-      gfx->drawLine(x, cy + 14, x - 4, cy + 24, C_AZUL);
-      gfx->drawLine(x + 1, cy + 14, x - 3, cy + 24, C_AZUL);
+      int x = cx - 12 * s + i * 9 * s;
+      gfx->drawLine(x, cy + 10 * s, x - 3 * s, cy + 17 * s, C_GOTA);
+      if (s > 0.7) gfx->drawLine(x + 1, cy + 10 * s, x + 1 - 3 * s, cy + 17 * s, C_GOTA);
     }
   }
   if (nieve) {
-    for (int i = 0; i < 4; i++) gfx->fillCircle(cx - 16 + i * 12, cy + 17 + (i % 2) * 5, 3, 0xFFFF);
+    for (int i = 0; i < 4; i++) gfx->fillCircle(cx - 12 * s + i * 9 * s, cy + 13 * s + (i % 2) * 4 * s, max(1, (int)(2 * s)), 0xFFFF);
   }
   if (tormenta) {
-    gfx->fillTriangle(cx + 4, cy + 8, cx - 8, cy + 22, cx + 1, cy + 22, C_AMARILLO);
-    gfx->fillTriangle(cx - 2, cy + 20, cx + 8, cy + 20, cx - 5, cy + 34, C_AMARILLO);
+    gfx->fillTriangle(cx + 3 * s, cy + 6 * s, cx - 6 * s, cy + 16 * s, cx + 1 * s, cy + 16 * s, C_RAYO);
+    gfx->fillTriangle(cx - 2 * s, cy + 15 * s, cx + 6 * s, cy + 15 * s, cx - 4 * s, cy + 26 * s, C_RAYO);
   }
 }
 
@@ -982,54 +1067,125 @@ int anchoTexto(const String &t, const GFXfont *fuente) {
   return w;
 }
 
-void dibujarClima() {
-  gfx->fillScreen(0x0000);
+// Texto centrado en cx (no en toda la pantalla)
+void textoCentradoEn(const String &t, int cx, int y, const GFXfont *fuente, uint16_t color) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  gfx->setFont(fuente);
+  gfx->setTextSize(1);
+  gfx->getTextBounds(t, 0, y, &x1, &y1, &w, &h);
+  int x = cx - (int)w / 2 - x1;
+  if (sombraTexto) {
+    gfx->setTextColor(0x18C6);
+    gfx->setCursor(x + 1, y + 1);
+    gfx->print(t);
+  }
+  gfx->setTextColor(color);
+  gfx->setCursor(x, y);
+  gfx->print(t);
+}
 
-  // Ciudad (sin region ni pais, recortada si no cabe)
+// Cielo de fondo segun el tiempo (fondoCodigo) y si es de dia (fondoDia)
+int cieloSegunClima() {
+  int c = fondoCodigo;
+  bool d = fondoDia;
+  if (c >= 95) return C_TORMENTA;
+  if ((c >= 51 && c <= 67) || (c >= 80 && c <= 82)) return d ? C_LLUVIA_DIA : C_LLUVIA_NOCHE;
+  if ((c >= 71 && c <= 77) || c == 85 || c == 86) return d ? C_NIEVE : C_NUBLADO_NOCHE;
+  if (c == 45 || c == 48) return d ? C_NEBLINA : C_NUBLADO_NOCHE;
+  if (c == 3) return d ? C_NUBLADO_DIA : C_NUBLADO_NOCHE;
+  if (c == 2) return d ? C_PARCIAL_DIA : C_PARCIAL_NOCHE;
+  return d ? C_DESPEJADO_DIA : C_DESPEJADO_NOCHE;
+}
+
+// Dibuja el JPG del cielo; si cieloTarjeta, aclara la zona de la tarjeta (efecto de vidrio)
+int dibujarBloqueCielo(JPEGDRAW *p) {
+  if (cieloTarjeta) {
+    for (int j = 0; j < p->iHeight; j++) {
+      int y = p->y + j;
+      if (y < TARJETA_Y0 || y >= TARJETA_Y1) continue;
+      for (int i = 0; i < p->iWidth; i++) {
+        int x = p->x + i;
+        if (x < TARJETA_X0 || x > TARJETA_X1) continue;
+        uint16_t c = p->pPixels[j * p->iWidth + i];
+        int r = c >> 11, g = (c >> 5) & 63, b = c & 31;
+        r += (31 - r) * 36 / 256;
+        g += (63 - g) * 36 / 256;
+        b += (31 - b) * 36 / 256;
+        p->pPixels[j * p->iWidth + i] = (r << 11) | (g << 5) | b;
+      }
+    }
+  }
+  gfx->draw16bitRGBBitmap(p->x, p->y, p->pPixels, p->iWidth, p->iHeight);
+  return 1;
+}
+
+void dibujarFondoCielo() {
+  int n = cieloSegunClima();
+  if (jpeg.openFLASH((uint8_t *)CIELOS[n], CIELOS_LARGO[n], dibujarBloqueCielo)) {
+    jpeg.setPixelType(RGB565_LITTLE_ENDIAN);
+    jpeg.decode(0, 0, 0);
+    jpeg.close();
+    return;
+  }
+  // si fallara la imagen: degradado simple
+  for (int y = 0; y < 240; y++) gfx->drawFastHLine(0, y, 240, climaFondoEn(y, 0));
+}
+
+void dibujarClima() {
+  fondoCodigo = climaCodigo;
+  fondoDia = climaDia;
+  cieloTarjeta = true;
+  dibujarFondoCielo();
+  cieloTarjeta = false;
+  sombraTexto = true;
+
+
+  const uint16_t BLANCO = 0xFFFF;
+
+  // Ciudad (sin region ni pais; si no cabe se quitan palabras: "Santiago de Chile" -> "Santiago")
   String ciudad = sinTildes(climaCiudad);
   int coma = ciudad.indexOf(',');
   if (coma > 0) ciudad = ciudad.substring(0, coma);
-  // si no cabe, se quitan palabras del final ("Santiago de Chile" -> "Santiago")
-  while (anchoTexto(ciudad, &FreeSansBold12pt7b) > 190 && ciudad.lastIndexOf(' ') > 0) {
+  while (anchoTexto(ciudad, &ClimaTexto) > 176 && ciudad.lastIndexOf(' ') > 0) {
     ciudad = ciudad.substring(0, ciudad.lastIndexOf(' '));
     String ult = ciudad.substring(ciudad.lastIndexOf(' ') + 1);
     ult.toLowerCase();
     if ((ult == "de" || ult == "del" || ult == "la" || ult == "el" || ult == "los" || ult == "las") && ciudad.lastIndexOf(' ') > 0)
       ciudad = ciudad.substring(0, ciudad.lastIndexOf(' '));
   }
-  while (ciudad.length() > 3 && anchoTexto(ciudad, &FreeSansBold12pt7b) > 190) ciudad.remove(ciudad.length() - 1);
-  textoCentrado(ciudad, 52, &FreeSansBold12pt7b, C_GRIS);
+  while (ciudad.length() > 3 && anchoTexto(ciudad, &ClimaTexto) > 176) ciudad.remove(ciudad.length() - 1);
+  textoCentrado(ciudad, 44, &ClimaTexto, BLANCO);
 
-  dibujarIconoClima(120, 92);
-
-  // Temperatura actual con el simbolo de grados (la letra no lo trae)
-  String t = String((int)lroundf(climaTemp));
-  gfx->setFont(&FreeSansBold24pt7b);
-  int16_t x1, y1;
-  uint16_t w, h;
-  gfx->getTextBounds(t, 0, 160, &x1, &y1, &w, &h);
-  int x = (240 - ((int)w + 14)) / 2 - x1;
-  gfx->setTextColor(0xFFFF);
-  gfx->setCursor(x, 160);
-  gfx->print(t);
-  int gx = x + x1 + w + 9;
-  gfx->drawCircle(gx, 160 - 29, 5, 0xFFFF);
-  gfx->drawCircle(gx, 160 - 29, 4, 0xFFFF);
+  // Temperatura grande y fina (en esta fuente ':' es el simbolo de grados)
+  textoCentrado(String((int)lroundf(climaTemp)) + ":", 108, &ClimaTemp, BLANCO);
 
   // Descripcion (o probabilidad de lluvia si esta nublado y puede llover)
   String desc = climaDescripcion();
   if (climaCodigo < 51 && climaLluvia >= 40) desc = "Lluvia " + String(climaLluvia) + "%";
-  textoCentrado(desc, 190, &FreeSansBold12pt7b, C_NARANJO);
+  if (anchoTexto(desc, &ClimaTexto) > 200) desc = desc.substring(0, desc.indexOf(' '));
+  textoCentrado(desc, 133, &ClimaTexto, BLANCO);
 
-  // Minima (celeste) / maxima (naranjo) del dia
-  String sMin = String((int)lroundf(climaMin)), sSep = " / ", sMax = String((int)lroundf(climaMax));
-  int total = anchoTexto(sMin, &FreeSansBold12pt7b) + anchoTexto(sSep, &FreeSansBold12pt7b) + anchoTexto(sMax, &FreeSansBold12pt7b);
-  gfx->setFont(&FreeSansBold12pt7b);
-  gfx->setCursor((240 - total) / 2, 216);
-  gfx->setTextColor(C_CELESTE); gfx->print(sMin);
-  gfx->setTextColor(C_GRIS); gfx->print(sSep);
-  gfx->setTextColor(C_NARANJO); gfx->print(sMax);
+  // Maxima y minima (en estas fuentes '`' = grados, '{' = a con tilde, '}' = i con tilde)
+  textoCentrado("M{x.: " + String((int)lroundf(climaMax)) + "`  M}n.: " + String((int)lroundf(climaMin)) + "`", 156, &ClimaTexto, BLANCO);
 
+  // Proximas horas: ahora y las 2 siguientes
+  for (int i = 0; i < 3; i++) {
+    int paso = cfgPantalla == 2 ? 38 : 48;   // en la redonda las columnas van mas juntas (el borde es curvo)
+    int cx = 120 + (i - 1) * paso;
+    char hh[6];
+    snprintf(hh, sizeof(hh), "%02d", climaHoras[i].hora);
+    String etiqueta = i == 0 ? String("Ahora") : String(hh);
+    float t = i == 0 ? climaTemp : climaHoras[i].temp;
+    int cod = i == 0 ? climaCodigo : climaHoras[i].codigo;
+    int dia = i == 0 ? climaDia : climaHoras[i].dia;
+    if (i > 0 && climaHoras[i].hora < 0) continue;   // sin datos
+    textoCentradoEn(etiqueta, cx, 182, &ClimaChico, BLANCO);
+    dibujarIconoClima(cx, 203, cod, dia, 0.55, climaFondoEn(199, TARJETA_CLARO));
+    textoCentradoEn(String((int)lroundf(t)) + "`", cx, 230, &ClimaChico, BLANCO);
+  }
+
+  sombraTexto = false;
   gfx->setFont((const GFXfont *)nullptr);   // vuelve a la letra normal para los mensajes
 }
 
