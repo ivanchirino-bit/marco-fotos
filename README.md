@@ -112,6 +112,11 @@ descripción y mínima/máxima del día.
 
 Los datos vienen de [Open-Meteo](https://open-meteo.com) (gratis, sin registro ni clave) y se actualizan cada 30 minutos.
 
+El fondo de la hora y del clima es un **cielo realista** que cambia según el tiempo y si es de día o de noche
+(despejado, parcial, nublado, lluvia, tormenta, nieve, neblina, noche con luna y estrellas). Son 11 imágenes JPG de 240×240
+(≈55 KB en total) guardadas en `marco_wifi/Cielos.h`, generadas por código (ver `clima/cielos.py`).
+Los textos usan la tipografía **Inter** (licencia SIL Open Font License), convertida a fuentes de Arduino_GFX con `clima/gfxfont.py`.
+
 ## Otras formas de cargar fotos
 
 ### Por cable (sin WiFi)
@@ -141,6 +146,7 @@ Traen 2 imágenes de ejemplo en `ejemplos.h`. Para usar tus fotos, genera los ar
 - JPG: [JPEGDEC](https://github.com/bitbank2/JPEGDEC).
 - JSON: [ArduinoJson](https://github.com/bblanchon/ArduinoJson).
 - Clima y búsqueda de ciudades: [Open-Meteo](https://open-meteo.com).
+- Tipografía: [Inter](https://rsms.me/inter/) (SIL Open Font License 1.1).
 - Fuentes FreeSansBold de [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library) (licencia BSD).
 - Conversión de fotos HEIC en el navegador: [heic2any](https://github.com/alexcorvi/heic2any).
 
